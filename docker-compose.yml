@@ -1,0 +1,48 @@
+version: '3.8'
+
+services:
+  app:
+    image: "${APP_IMAGE}"
+    restart: unless-stopped
+
+    environment:
+      APP_ENV: "${APP_ENV}"
+      APP_URL: "${APP_URL}"
+
+    networks:
+      - internal
+      - review-proxy
+
+    labels:
+      traefik.enable: "true"
+
+      traefik.http.routers.${REVIEW_ID}.rule: >-
+        Host(`${REVIEW_HOST}`)
+
+      traefik.http.routers.${REVIEW_ID}.entrypoints: "web"
+
+      traefik.http.services.${REVIEW_ID}.loadbalancer.server.port: "8080"
+
+      traefik.docker.network: "review-proxy"
+
+    healthcheck:
+      test:
+        - CMD
+        - curl
+        - --fail
+        - http://localhost:8080/health
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+    mem_limit: 1g
+    cpus: 1.0
+
+networks:
+  internal:
+    internal: true
+
+  review-proxy:
+    external: true
+    name: review-proxy
+  
