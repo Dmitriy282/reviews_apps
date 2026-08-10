@@ -7,7 +7,10 @@ on:
       - reopened
       - synchronize
       - closed
-
+  workflow_dispatch: # <--- Добавит кнопку "Run workflow" в интерфейсе GitHub
+  push:
+    branches: [ "main" ]
+    
 permissions:
   contents: read
   packages: write
