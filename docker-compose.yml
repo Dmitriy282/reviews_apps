@@ -25,6 +25,9 @@ services:
 
       traefik.docker.network: "review-proxy"
 
+    volumes:
+      -- ./certs:/etc/nginx/ssl:ro # Mounts local certificates folder
+      
     healthcheck:
       test:
         - CMD
@@ -45,4 +48,3 @@ networks:
   review-proxy:
     external: true
     name: review-proxy
-  
