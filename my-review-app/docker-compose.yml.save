@@ -1,0 +1,27 @@
+version: '3.8'
+
+services:
+  app:
+    image: nginx:latest
+    restart: unless-stopped
+
+    networks:
+      - internal
+      - review-proxy
+
+    volumes:
+      - ./certs:/etc/nginx/ssl:ro
+      -       
+
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1g
+
+networks:
+  internal:
+    internal: true
+  review-proxy:
+    external: true
+    name: review-proxy

@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Space Explorer Logbook</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <link
+        href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700&family=Roboto:wght@300;400;500&display=swap"
+        rel="stylesheet">
+</head>
+
+<body>
+    <div class="stars"></div>
+    <div class="twinkling"></div>
+
+    <div class="container">
+        <header class="glass-panel">
+            <h1>🌌 Space Explorer Logbook</h1>
+            <div class="stats">
+                <span class="jump-counter">Warp Jumps (Redis): <span class="highlight">{{ jump_count }}</span></span>
+            </div>
+        </header>
+
+        <main>
+            <section class="glass-panel form-section">
+                <h2>Record New Discovery</h2>
+                <form action="/" method="POST">
+                    <div class="input-group">
+                        <label for="planet_name">Planet/System Name</label>
+                        <input type="text" id="planet_name" name="planet_name" required placeholder="e.g., Kepler-186f">
+                    </div>
+                    <div class="input-group">
+                        <label for="description">Observation Notes</label>
+                        <textarea id="description" name="description" rows="4" required
+                            placeholder="Atmosphere composition, life signs..."></textarea>
+                    </div>
+                    <button type="submit" class="glow-on-hover">Submit to Log (PostgreSQL)</button>
+                </form>
+            </section>
+
+            <section class="glass-panel logs-section">
+                <h2>Recent Discoveries</h2>
+                <div class="logs-container">
+                    {% if entries %}
+                    {% for entry in entries %}
+                    <div class="log-entry">
+                        <div class="log-header">
+                            <h3>{{ entry.planet_name }}</h3>
+                            <span class="date">{{ entry.discovery_date.strftime('%Y-%m-%d %H:%M') }}</span>
+                        </div>
+                        <p class="description">{{ entry.description }}</p>
+                    </div>
+                    {% endfor %}
+                    {% else %}
+                    <p class="empty-state">No discoveries logged yet. Start exploring!</p>
+                    {% endif %}
+                </div>
+            </section>
+        </main>
+    </div>
+</body>
+
+</html>
