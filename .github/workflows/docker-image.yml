@@ -22,75 +22,77 @@ env:
   IMAGE_TAG: ${{ github.sha }}
 
 jobs:
+  build:
+    runs-on: ubuntu-latest
   # Додано ідентифікатор job та середовище виконання (runs-on), яких не вистача    
     # Всі кроки повинні знаходитись всередині блоку steps:
-  steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-    - name: Login to GHCR
-      uses: docker/login-action@v3
-      with:
-        registry: ghcr.io
-        username: ${{ github.actor }}
-        password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-    - name: Build Docker image
-      uses: docker/build-push-action@v5.3.0
-      with:
-        context: ./reviews_apps/my-review-app
-        push: true
-        tags: ghcr.io/dmitriy282/my-app:${{ env.IMAGE_TAG }}
+      - name: Build Docker image
+        uses: docker/build-push-action@v5.3.0
+        with:
+          context: ./reviews_apps/my-review-app
+          push: true
+          tags: ghcr.io/dmitriy282/my-app:${{ env.IMAGE_TAG }}
 
-    - name: Start services locally
-      run: | 
-        cd ./reviews_apps/my-review-app
-        docker compose up -d
+      - name: Start services locally
+        run: | 
+          cd ./reviews_apps/my-review-app
+          docker compose up -d
 
-    - name: Send Deployment Annotation to Grafana
-      if: success()
-      env:
-        GRAFANA_API_KEY: ${{ secrets.GRAFANA_API_KEY }}
-        GRAFANA_URL: ${{ secrets.GRAFANA_URL }}
-        ACTOR: ${{ github.actor }}
-        SHA: ${{ github.sha }}
-      run: |
-        PAYLOAD=$(jq -n \
-          --arg time "$(date +%s%3N)" \
-          --arg text "Deployment of space-explorer-logbook triggered by $ACTOR. Commit: $SHA" \
-          '{
-            time: ($time | tonumber),
-            isRegion: false,
-            tags: ["deploy", "space-explorer-logbook", "production"], 
-            text: $text
-          }')
+      - name: Send Deployment Annotation to Grafana
+        if: success()
+        env:
+          GRAFANA_API_KEY: ${{ secrets.GRAFANA_API_KEY }}
+          GRAFANA_URL: ${{ secrets.GRAFANA_URL }}
+          ACTOR: ${{ github.actor }}
+          SHA: ${{ github.sha }}
+        run: |
+          PAYLOAD=$(jq -n \
+            --arg time "$(date +%s%3N)" \
+            --arg text "Deployment of space-explorer-logbook triggered by $ACTOR. Commit: $SHA" \
+            '{
+              time: ($time | tonumber),
+              isRegion: false,
+              tags: ["deploy", "space-explorer-logbook", "production"], 
+              text: $text
+            }')
 
-        curl -s -X POST -H "Authorization: Bearer $GRAFANA_API_KEY" \
-          -H "Content-Type: application/json" \
-          -d "$PAYLOAD" \
-          "$GRAFANA_URL/api/annotations"
+          curl -s -X POST -H "Authorization: Bearer $GRAFANA_API_KEY" \
+            -H "Content-Type: application/json" \
+            -d "$PAYLOAD" \
+            "$GRAFANA_URL/api/annotations"
 
       # -------------------------------------------------------------------------
       # Build and deploy
       # -------------------------------------------------------------------------
-    - name: Deploy to Server via SSH
-      uses: appleboy/ssh-action@v1.0.3
-      with:
-        host: ${{ secrets.SERVER_HOST }}
-        username: ${{ secrets.SERVER_USER }}
-        key: ${{ secrets.SSH_PRIVATE_KEY }}
-        script: |
+      - name: Deploy to Server via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
             # Логинимся в GHCR уже внутри вашего сервера
-            echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+              echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
 
             # Примітка: usermod/newgrp можуть некоректно відпрацювати в неінтерактивній SSH-сесії.
             # Бажано додати юзера в групу docker на сервері заздалегідь вручну один раз.
-            sudo usermod -aG docker $USER || true
+              sudo usermod -aG docker $USER || true
 
             # Скачиваем обновленный образ
-            docker pull ghcr.io/dmitriy282/my-app:${{ env.IMAGE_TAG }}
+              docker pull ghcr.io/dmitriy282/my-app:${{ env.IMAGE_TAG }}
 
-            cd /reviews_apps/my-review_apps
+              cd /reviews_apps/my-review_apps
 
             # Запускаем новый контейнер
-            docker compose up -d
+              docker compose up -d
