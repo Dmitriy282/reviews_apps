@@ -90,7 +90,7 @@ jobs:
             # Скачиваем обновленный образ
           docker pull ghcr.io/dmitriy282/my-app:${{ env.IMAGE_TAG }}
 
-          cd /reviews_apps
+          cd /reviews_apps/my-review_apps
 
             # Запускаем новый контейнер
           docker compose up -d
