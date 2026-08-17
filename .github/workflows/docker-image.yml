@@ -41,13 +41,13 @@ jobs:
       - name: Build Docker image
         uses: docker/build-push-action@v5.3.0
         with:
-          context: ./app
+          context: ./reviews_apps/my-review_apps
           push: true
           tags: ghcr.io/dmitriy282/my-app:${{ env.IMAGE_TAG }}
 
       - name: Start services locally
         run: | 
-          cd ./my-review_apps
+          cd ./reviews_apps/my-review_apps
           docker compose up -d
 
       - name: Send Deployment Annotation to Grafana
