@@ -81,16 +81,16 @@ jobs:
         key: ${{ secrets.SSH_PRIVATE_KEY }}
         script: |
             # Логинимся в GHCR уже внутри вашего сервера
-          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+            echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
 
             # Примітка: usermod/newgrp можуть некоректно відпрацювати в неінтерактивній SSH-сесії.
             # Бажано додати юзера в групу docker на сервері заздалегідь вручну один раз.
-          sudo usermod -aG docker $USER || true
+            sudo usermod -aG docker $USER || true
 
             # Скачиваем обновленный образ
-          docker pull ghcr.io/dmitriy282/my-app:${{ env.IMAGE_TAG }}
+            docker pull ghcr.io/dmitriy282/my-app:${{ env.IMAGE_TAG }}
 
-          cd /reviews_apps/my-review_apps
+            cd /reviews_apps/my-review_apps
 
             # Запускаем новый контейнер
-          docker compose up -d
+            docker compose up -d
