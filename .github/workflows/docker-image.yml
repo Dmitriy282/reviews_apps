@@ -1,5 +1,4 @@
 name: Deploy to GCP
-
 on:
   push:
     branches: [ "main" ]
@@ -8,11 +7,6 @@ on:
   # pull_request:
   #   types: [opened, synchronize]
 
-# ВАЖНО: блок permissions должен быть здесь, с правильными отступами
-permissions:
-  contents: read
-  packages: write
-
 env:
   REGISTRY: ghcr.io
   IMAGE_TAG: ${{ github.sha }}
@@ -20,8 +14,9 @@ env:
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
-    
-    # ВАЖНО: steps должны быть сдвинуты вправо, так как они принадлежат build-and-deploy
+    permissions:
+      contents: read
+      packages: write
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -49,14 +44,11 @@ jobs:
           script: |
             # 1. Логинимся в GitHub Container Registry на сервере GCP
             echo "${{ secrets.GITHUB_TOKEN }}" | docker login ${{ env.REGISTRY }} -u ${{ github.actor }} --password-stdin
-
             # 2. Скачиваем свежий собранный образ
             docker pull ${{ env.REGISTRY }}/dmitriy282/my-app:${{ env.IMAGE_TAG }}
-
             # 3. Переходим в директорию проекта на сервере
             # ВАЖНО: Укажите здесь реальный путь к папке на ВАШЕМ сервере GCP, где лежит docker-compose.yml
             cd /home/${{ secrets.SERVER_USER }}/reviews_apps/my-review-app
-
             # 4. Передаем тег в окружение и перезапускаем docker compose
             export IMAGE_TAG=${{ env.IMAGE_TAG }}
             docker compose down # опционально, если нужно полностью пересоздать
