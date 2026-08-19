@@ -3,86 +3,67 @@ version: '3.8'
 services:
   app:
     build:
-      context: .     # Путь к папке, где лежит ваш код и Dockerfile
+      context: .
       dockerfile: Dockerfile
-        
     restart: unless-stopped
-
     environment:
       - DATABASE_URL=postgresql://space_admin:supersecret@db:5432/space_logbook
       - REDIS_HOST=redis
       - REDIS_PORT=6379
-    
     depends_on:
       db:
         condition: service_healthy
       redis:
         condition: service_started
-
     labels:
-      # Дозволяємо Traefik обробляти цей контейнер
       - "traefik.enable=true"
-
-      # Правило роутингу за доменним ім'ям
-      - "traefik.http.routers.nginx.rule=Host(`34-176-31-27.sslip.io`)"
-      - "traefik.http.routers.nginx.entrypoints=websecure"
-
-      # Вказуємо використовувати сертифікат від Let's Encrypt
-      - "traefik.http.routers.nginx.tls.certresolver=myresolver"
-
-      # Порт, який слухає сам Nginx всередині своєї мережі
-      - "traefik.http.services.nginx.loadbalancer.server.port=5000"
-
+      - "traefik.http.routers.app.rule=Host(`34-176-31-27.sslip.io`)"
+      - "traefik.http.routers.app.entrypoints=websecure"
+      - "traefik.http.routers.app.tls.certresolver=myresolver"
+      - "traefik.http.services.app.loadbalancer.server.port=5000"
     networks:
       - web
-    volumes:
-      - ./html:/usr/share/nginx/html:ro
-      - ./certs:/etc/nginx/ssl:ro
     deploy:
       resources:
         limits:
           cpus: '1.0'
           memory: 1g
-    
+
   traefik:
     image: traefik:v3
     container_name: traefik
     restart: unless-stopped
     command:
-      # Вмикаємо Docker provider
-    - "--providers.docker=true"
-    - "--providers.docker.exposedbydefault=false"
-
-      # Точки входу (Entrypoints)
-    - "--entrypoints.web.address=:80"
-    - "--entrypoints.websecure.address=:443"
-
-      # Автоматичне перенаправлення з HTTP на HTTPS
-    - "--entrypoints.web.http.redirections.entrypoint.to=websecure"
-    - "--entrypoints.web.http.redirections.entrypoint.scheme=https"
-
-      # Налаштування Let's Encrypt (ACME HTTP Challenge)
-    - "--certificatesresolvers.myresolver.acme.httpchallenge=true"
-    - "--certificatesresolvers.myresolver.acme.httpchallenge.entrypoint=web"
-      # !!! ЗАМІНІТЬ email НА ВЛАСНИЙ !!!
-    - "--certificatesresolvers.myresolver.acme.email=dimavk3@gmail.com"
-    - "--certificatesresolvers.myresolver.acme.storage=/letsencrypt/acme.json"
-
-      # Дашборд Traefik (опціонально, доступний на порту 8080)
-    - "--api.insecure=true"
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.websecure.address=:443"
+      - "--entrypoints.web.http.redirections.entrypoint.to=websecure"
+      - "--entrypoints.web.http.redirections.entrypoint.scheme=https"
+      - "--certificatesresolvers.myresolver.acme.httpchallenge=true"
+      - "--certificatesresolvers.myresolver.acme.httpchallenge.entrypoint=web"
+      - "--certificatesresolvers.myresolver.acme.email=dimavk3@gmail.com"
+      - "--certificatesresolvers.myresolver.acme.storage=/letsencrypt/acme.json"
+      - "--api.insecure=true"
+      # Додайте цей рядок для дебагу, потім приберіть:
+      - "--log.level=DEBUG"
     ports:
       - "80:80"
       - "443:443"
-      - "8080:8080" # Порт для дашборду Traefik
+      - "8080:8080"
     volumes:
       - "/var/run/docker.sock:/var/run/docker.sock:ro"
       - "./letsencrypt:/letsencrypt"
     networks:
       - web
+
   redis:
     image: redis:7-alpine
     ports:
       - "6379:6379"
+    networks:
+      - web
+
   db:
     image: postgres:15-alpine
     environment:
@@ -98,7 +79,9 @@ services:
       retries: 5
     volumes:
       - pgdata:/var/lib/postgresql/data
- 
+    networks:
+      - web
+
 networks:
   web:
     driver: bridge
