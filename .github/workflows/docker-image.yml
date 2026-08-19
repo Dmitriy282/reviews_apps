@@ -20,6 +20,12 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+      - name: Set image tag
+        run: |
+          TIMESTAMP=$(date +%s)
+          SHA=$(echo ${{ github.sha }} | cut -c1-7)
+          echo "IMAGE_TAG=${TIMESTAMP}-${SHA}" >> $GITHUB_ENV
+
 
       - name: Login to GHCR
         uses: docker/login-action@v3
