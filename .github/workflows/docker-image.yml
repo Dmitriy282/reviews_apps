@@ -48,7 +48,7 @@ jobs:
             docker pull ${{ env.REGISTRY }}/dmitriy282/my-app:${{ env.IMAGE_TAG }}
             # 3. Переходим в директорию проекта на сервере
             # ВАЖНО: Укажите здесь реальный путь к папке на ВАШЕМ сервере GCP, где лежит docker-compose.yml
-            cd ~/${{ secrets.SERVER_USER }}/reviews_apps/my-review-app
+            cd /home/${{ secrets.SERVER_USER }}/reviews_apps/my-review-app
             # 4. Передаем тег в окружение и перезапускаем docker compose
             export IMAGE_TAG=${{ env.IMAGE_TAG }}
             docker compose down # опционально, если нужно полностью пересоздать
