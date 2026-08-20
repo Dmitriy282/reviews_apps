@@ -63,13 +63,12 @@ jobs:
           
       - name: Deploy to GCP Server via SSH
         uses: appleboy/ssh-action@v1.0.3
-        env:
-          DYNAMIC_HOST: ${{ env.DYNAMIC_HOST }}
+        
         with:
           host: ${{ secrets.SERVER_HOST }}
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
-          envs: DYNAMIC_HOST
+         
           script: |
             # 1. Логинимся в GitHub Container Registry на сервере GCP
             echo "${{ secrets.GITHUB_TOKEN }}" | docker login ${{ env.REGISTRY }} -u ${{ github.actor }} --password-stdin
@@ -79,7 +78,7 @@ jobs:
             # ВАЖНО: Укажите здесь реальный путь к папке на ВАШЕМ сервере GCP, где лежит docker-compose.yml
             cd /home/${{ secrets.SERVER_USER }}/reviews_apps/my-review-app
             # 4. Передаем тег в окружение и перезапускаем docker compose
-            echo "DYNAMIC_HOST={{ $DYNAMIC_HOST" }} >> .env
-            export IMAGE_TAG=${{ env.IMAGE_TAG }}
+            echo "DYNAMIC_HOST={{ env.$DYNAMIC_HOST" }} >> .env
+            echo  IMAGE_TAG=${{ env.IMAGE_TAG }} >> .env
             docker compose down # опционально, если нужно полностью пересоздать
             docker compose up -d
