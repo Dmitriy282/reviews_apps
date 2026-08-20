@@ -40,7 +40,27 @@ jobs:
           context: ./my-review-app
           push: true
           tags: ${{ env.REGISTRY }}/dmitriy282/my-app:${{ env.IMAGE_TAG }}
-
+      - name: Generate Dynamic Host for Traefik
+        id: vars
+        run: |
+          COMMIT_MSG="${{ github.event.head_commit.message }}"
+          SHORT_SHA="${GITHUB_SHA::7}"
+          BASE_DOMAIN="34-176-31-27.sslip.io"
+          
+          # Шукаємо кастомний хост у форматі [host: назва]
+          CUSTOM_HOST=$(echo "$COMMIT_MSG" | grep -oP '(?<=\[host: )[a-zA-Z0-9_-]+(?=\])' || echo "")
+          
+          if [ -n "$CUSTOM_HOST" ]; then
+            # Якщо є перевизначення: my-feature.34-176-31-27.sslip.io
+            HOST_VALUE="${CUSTOM_HOST}.${BASE_DOMAIN}"
+          else
+            # За замовчуванням: a1b2c3d.34-176-31-27.sslip.io
+            HOST_VALUE="${SHORT_SHA}.${BASE_DOMAIN}"
+          fi
+          
+          echo "DYNAMIC_HOST=$HOST_VALUE" >> $GITHUB_ENV
+          echo "Згенерований хост: $HOST_VALUE"
+          
       - name: Deploy to GCP Server via SSH
         uses: appleboy/ssh-action@v1.0.3
         with:
