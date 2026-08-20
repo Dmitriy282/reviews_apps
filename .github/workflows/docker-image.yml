@@ -67,7 +67,9 @@ jobs:
           host: ${{ secrets.SERVER_HOST }}
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
+          envs: DYNAMIC_HOST
           script: |
+            echo "DYNAMIC_HOST=$DYNAMIC_HOST" > .env
             # 1. Логинимся в GitHub Container Registry на сервере GCP
             echo "${{ secrets.GITHUB_TOKEN }}" | docker login ${{ env.REGISTRY }} -u ${{ github.actor }} --password-stdin
             # 2. Скачиваем свежий собранный образ
