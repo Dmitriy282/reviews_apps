@@ -37,7 +37,7 @@ jobs:
       - name: Build and push Docker image
         uses: docker/build-push-action@v5.3.0
         with:
-          context: ./my-review-app
+          context: ./reviews_apps
           push: true
           tags: ${{ env.REGISTRY }}/dmitriy282/my-app:${{ env.IMAGE_TAG }}
       - name: Generate Dynamic Host for Traefik
