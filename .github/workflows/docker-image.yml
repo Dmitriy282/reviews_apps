@@ -79,7 +79,7 @@ jobs:
             # ВАЖНО: Укажите здесь реальный путь к папке на ВАШЕМ сервере GCP, где лежит docker-compose.yml
             cd /home/${{ secrets.SERVER_USER }}/reviews_apps/my-review-app
             # 4. Передаем тег в окружение и перезапускаем docker compose
-            echo "DYNAMIC_HOST=$DYNAMIC_HOST" > .env
+            echo "DYNAMIC_HOST={{ $DYNAMIC_HOST" }} >> .env
             export IMAGE_TAG=${{ env.IMAGE_TAG }}
             docker compose down # опционально, если нужно полностью пересоздать
             docker compose up -d
