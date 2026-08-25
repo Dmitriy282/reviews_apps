@@ -61,7 +61,7 @@ jobs:
         run: |
           COMMIT_MSG="${{ github.event.head_commit.message }}"
           SHORT_SHA="${GITHUB_SHA::7}"
-          BASE_DOMAIN="34-176-31-27.sslip.io"
+          BASE_DOMAIN="34-176-118-128.sslip.io"
 
           # Якщо передано кастомний хост через інпут (для видалення)
           if [ "${{ github.event.inputs.target_host }}" != "" ]; then
