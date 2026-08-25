@@ -100,7 +100,11 @@ jobs:
             # ВАЖНО: Укажите здесь реальный путь к папке на ВАШЕМ сервере GCP, где лежит docker-compose.yml
             cd /home/${{ secrets.SERVER_USER }}/reviews_apps/my-review-app
             # 4. Передаем тег в окружение и перезапускаем docker compose
+            SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
+            echo "COMPOSE_PROJECT_NAME=${SHORT_SHA}" > .env
             echo "DYNAMIC_HOST=${{ env.DYNAMIC_HOST }}" > .env
             echo "IMAGE_TAG=${{ env.IMAGE_TAG }}" >> .env
+            echo "ROUTER_NAME=${SHORT_SHA}" >> .env
+            
             docker compose down # опционально, если нужно полностью пересоздать
             docker compose up -d
