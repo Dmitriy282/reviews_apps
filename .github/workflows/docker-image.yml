@@ -119,7 +119,7 @@ jobs:
             docker pull ${{ env.REGISTRY }}/dmitriy282/my-app:${{ env.IMAGE_TAG }}
             # 3. Переходим в директорию проекта на сервере
             # ВАЖНО: Укажите здесь реальный путь к папке на ВАШЕМ сервере GCP, где лежит docker-compose.yml
-            cd /home/${{ secrets.SERVER_USER }}/reviews_apps/my-review-app
+            cd /home/${{ secrets.SERVER_USER }}/reviews_apps/${{ env.DYNAMIC_HOST }}
             # 4. Передаем тег в окружение и перезапускаем docker compose
             SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
             echo "COMPOSE_PROJECT_NAME=${SHORT_SHA}" > .env
