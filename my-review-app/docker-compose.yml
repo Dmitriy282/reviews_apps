@@ -2,9 +2,7 @@ version: '3.8'
 
 services:
   app:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    image: ${REGISTRY}/dmitriy282/my-app:${IMAGE_TAG}
     restart: unless-stopped
     environment:
       - DATABASE_URL=postgresql://space_admin:supersecret@db:5432/space_logbook
