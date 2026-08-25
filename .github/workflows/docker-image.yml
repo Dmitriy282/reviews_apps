@@ -3,6 +3,19 @@ on:
   push:
     branches: [ "main" ]
   workflow_dispatch:
+    inputs:
+      action:
+        description: 'Виберіть дію: розгорнути чи видалити?'
+        required: true
+        default: 'deploy'
+        type: choice
+        options:
+          - deploy
+          - destroy
+      target_host:
+        description: 'Специфічний хост для видалення (наприклад, my-feature). Залиште порожнім, щоб використати поточний.'
+        required: false
+        type: string
   # Если нужно деплоить еще и при пулл-реквестах, раскомментируйте строки ниже:
   # pull_request:
   #   types: [opened, synchronize]
@@ -21,6 +34,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
       - name: Set image tag
+        if: ${{ github.event.inputs.action != 'destroy' }}
         run: |
           TIMESTAMP=$(date +%s)
           SHA=$(echo ${{ github.sha }} | cut -c1-7)
@@ -28,6 +42,7 @@ jobs:
 
 
       - name: Login to GHCR
+        if: ${{ github.event.inputs.action != 'destroy' }}
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
@@ -35,6 +50,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push Docker image
+        if: ${{ github.event.inputs.action != 'destroy' }}
         uses: docker/build-push-action@v5.3.0
         with:
           context: ./my-review-app
@@ -46,22 +62,25 @@ jobs:
           COMMIT_MSG="${{ github.event.head_commit.message }}"
           SHORT_SHA="${GITHUB_SHA::7}"
           BASE_DOMAIN="34-176-31-27.sslip.io"
-          
-          # Шукаємо кастомний хост у форматі [host: назва]
-          CUSTOM_HOST=$(echo "$COMMIT_MSG" | grep -oP '(?<=\[host: )[a-zA-Z0-9_-]+(?=\])' || echo "")
-          
-          if [ -n "$CUSTOM_HOST" ]; then
-            # Якщо є перевизначення: my-feature.34-176-31-27.sslip.io
-            HOST_VALUE="${CUSTOM_HOST}.${BASE_DOMAIN}"
+
+          # Якщо передано кастомний хост через інпут (для видалення)
+          if [ "${{ github.event.inputs.target_host }}" != "" ]; then
+            HOST_VALUE="${{ github.event.inputs.target_host }}.${BASE_DOMAIN}"
           else
-            # За замовчуванням: a1b2c3d.34-176-31-27.sslip.io
-            HOST_VALUE="${SHORT_SHA}.${BASE_DOMAIN}"
+            # Шукаємо кастомний хост у форматі [host: назва] в повідомленні коміту
+            CUSTOM_HOST=$(echo "$COMMIT_MSG" | grep -oP '(?<=\[host: )[a-zA-Z0-9_-]+(?=\])' || echo "")
+            if [ -n "$CUSTOM_HOST" ]; then
+              HOST_VALUE="${CUSTOM_HOST}.${BASE_DOMAIN}"
+            else
+              HOST_VALUE="${SHORT_SHA}.${BASE_DOMAIN}"
+            fi
           fi
-          
+
           echo "DYNAMIC_HOST=$HOST_VALUE" >> $GITHUB_ENV
           echo "Згенерований хост: $HOST_VALUE"
       
       - name: Create app directory on server
+        if: ${{ github.event.inputs.action != 'destroy' }}
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.SERVER_HOST }}
@@ -73,6 +92,7 @@ jobs:
 
       # 2. Копіюємо docker-compose.yml у створену папку
       - name: Copy docker-compose to server
+        if: ${{ github.event.inputs.action != 'destroy' }}
         uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.SERVER_HOST }}
@@ -84,6 +104,7 @@ jobs:
           strip_components: 1
           
       - name: Deploy to GCP Server via SSH
+        if: ${{ github.event.inputs.action != 'destroy' }}
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.SERVER_HOST }}
@@ -108,3 +129,28 @@ jobs:
             
             docker compose down # опционально, если нужно полностью пересоздать
             docker compose up -d
+      - name: Destroy Environment (Destroy only)
+        if: ${{ github.event.inputs.action == 'destroy' }}
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            APP_DIR="/home/${{ secrets.SERVER_USER }}/reviews_apps/${{ env.DYNAMIC_HOST }}"
+            
+            if [ -d "$APP_DIR" ]; then
+              echo "Зупиняємо та видаляємо контейнери в $APP_DIR..."
+              cd $APP_DIR
+              # -v видаляє також прив'язані volume, якщо вони були створені
+              docker compose down -v 
+              
+              echo "Видаляємо папку..."
+              cd ..
+              rm -rf $APP_DIR
+              
+              echo "Оточення ${{ env.DYNAMIC_HOST }} успішно видалено!"
+            else
+              echo "Папка $APP_DIR не знайдена. Схоже, оточення вже було видалено."
+            fi
+     
