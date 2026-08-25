@@ -126,6 +126,7 @@ jobs:
             echo "DYNAMIC_HOST=${{ env.DYNAMIC_HOST }}" > .env
             echo "IMAGE_TAG=${{ env.IMAGE_TAG }}" >> .env
             echo "ROUTER_NAME=${SHORT_SHA}" >> .env
+            echo "REGISTRY=${{ env.REGISTRY }}" >> .env
             
             docker compose down # опционально, если нужно полностью пересоздать
             docker compose up -d
