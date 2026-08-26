@@ -1,5 +1,4 @@
 version: '3.8'
-
 services:
   app:
     image: ${REGISTRY}/dmitriy282/my-app:${IMAGE_TAG}
@@ -15,10 +14,11 @@ services:
         condition: service_started
     labels:
       - "traefik.enable=true"
-      - 'traefik.http.routers.app.rule=Host(`${DYNAMIC_HOST}`)'
-      - "traefik.http.routers.app.entrypoints=websecure"
-      - "traefik.http.routers.app.tls.certresolver=myresolver"
-      - "traefik.http.services.app.loadbalancer.server.port=5000"
+      - "traefik.docker.network=traefik-net"
+      - 'traefik.http.routers.${ROUTER_NAME}.rule=Host(`${DYNAMIC_HOST}`)'
+      - "traefik.http.routers.${ROUTER_NAME}.entrypoints=websecure"
+      - "traefik.http.routers.${ROUTER_NAME}.tls.certresolver=myresolver"
+      - "traefik.http.services.${ROUTER_NAME}.loadbalancer.server.port=5000"
     networks:
       - web
       - traefik-net
@@ -27,50 +27,20 @@ services:
         limits:
           cpus: '1.0'
           memory: 1g
-
-  traefik:
-    image: traefik:v3
-    container_name: traefik
-    restart: unless-stopped
-    command:
-      - "--providers.docker=true"
-      - "--providers.docker.exposedbydefault=false"
-      - "--entrypoints.web.address=:80"
-      - "--entrypoints.websecure.address=:443"
-      - "--entrypoints.web.http.redirections.entrypoint.to=websecure"
-      - "--entrypoints.web.http.redirections.entrypoint.scheme=https"
-      - "--certificatesresolvers.myresolver.acme.httpchallenge=true"
-      - "--certificatesresolvers.myresolver.acme.httpchallenge.entrypoint=web"
-      - "--certificatesresolvers.myresolver.acme.email=dimavk3@gmail.com"
-      - "--certificatesresolvers.myresolver.acme.storage=/letsencrypt/acme.json"
-      - "--api.insecure=true"
-      # Додайте цей рядок для дебагу, потім приберіть:
-      - "--log.level=DEBUG"
-    ports:
-      - "80:80"
-      - "443:443"
-      - "8080:8080"
-    volumes:
-      - "/var/run/docker.sock:/var/run/docker.sock:ro"
-      - "./letsencrypt:/letsencrypt"
-    networks:
-      - web
-
+ 
   redis:
     image: redis:7-alpine
-    ports:
-      - "6379:6379"
+    restart: unless-stopped
     networks:
       - web
-
+ 
   db:
     image: postgres:15-alpine
+    restart: unless-stopped
     environment:
       - POSTGRES_USER=space_admin
       - POSTGRES_PASSWORD=supersecret
       - POSTGRES_DB=space_logbook
-    ports:
-      - "5432:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U space_admin"]
       interval: 5s
@@ -80,11 +50,12 @@ services:
       - pgdata:/var/lib/postgresql/data
     networks:
       - web
-
+ 
 networks:
   web:
     driver: bridge
   traefik-net:
     external: true
+ 
 volumes:
   pgdata:
