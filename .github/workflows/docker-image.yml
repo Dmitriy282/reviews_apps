@@ -1,3 +1,4 @@
+
 name: Deploy to GCP
 on:
   push:
@@ -19,11 +20,11 @@ on:
   # Если нужно деплоить еще и при пулл-реквестах, раскомментируйте строки ниже:
   # pull_request:
   #   types: [opened, synchronize]
-
+ 
 env:
   REGISTRY: ghcr.io
   IMAGE_TAG: ${{ github.sha }}
-
+ 
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
@@ -33,14 +34,14 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+ 
       - name: Set image tag
         if: ${{ github.event.inputs.action != 'destroy' }}
         run: |
           TIMESTAMP=$(date +%s)
           SHA=$(echo ${{ github.sha }} | cut -c1-7)
           echo "IMAGE_TAG=${TIMESTAMP}-${SHA}" >> $GITHUB_ENV
-
-
+ 
       - name: Login to GHCR
         if: ${{ github.event.inputs.action != 'destroy' }}
         uses: docker/login-action@v3
@@ -48,7 +49,7 @@ jobs:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-
+ 
       - name: Build and push Docker image
         if: ${{ github.event.inputs.action != 'destroy' }}
         uses: docker/build-push-action@v5.3.0
@@ -56,13 +57,14 @@ jobs:
           context: ./my-review-app
           push: true
           tags: ${{ env.REGISTRY }}/dmitriy282/my-app:${{ env.IMAGE_TAG }}
+ 
       - name: Generate Dynamic Host for Traefik
         id: vars
         run: |
           COMMIT_MSG="${{ github.event.head_commit.message }}"
           SHORT_SHA="${GITHUB_SHA::7}"
           BASE_DOMAIN="34-176-118-128.sslip.io"
-
+ 
           # Якщо передано кастомний хост через інпут (для видалення)
           if [ "${{ github.event.inputs.target_host }}" != "" ]; then
             HOST_VALUE="${{ github.event.inputs.target_host }}.${BASE_DOMAIN}"
@@ -75,9 +77,14 @@ jobs:
               HOST_VALUE="${SHORT_SHA}.${BASE_DOMAIN}"
             fi
           fi
-
+ 
           echo "DYNAMIC_HOST=$HOST_VALUE" >> $GITHUB_ENV
+          echo "ROUTER_NAME=$SHORT_SHA" >> $GITHUB_ENV
           echo "Згенерований хост: $HOST_VALUE"
+ 
+      # --- Traefik: окрема, незалежна папка. Деплоїться/оновлюється сам по собі,
+      # не чіпається кроком destroy review-оточень і не перезапускається,
+      # якщо вже працює (щоб не рвати маршрути інших активних review-оточень). ---
       - name: Copy Traefik compose to its own folder
         if: ${{ github.event.inputs.action != 'destroy' }}
         uses: appleboy/scp-action@v0.1.7
@@ -106,7 +113,8 @@ jobs:
             else
               echo "Traefik вже працює, не чіпаю його."
             fi
-      
+ 
+      # --- Окреме review-оточення: власна папка, тільки app + redis + db ---
       - name: Create app directory on server
         if: ${{ github.event.inputs.action != 'destroy' }}
         uses: appleboy/ssh-action@v1.0.3
@@ -115,10 +123,8 @@ jobs:
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
-            # Створюємо папку з назвою хоста (наприклад, a1b2c3d.34-176-31-27.sslip.io)
             mkdir -p /home/${{ secrets.SERVER_USER }}/reviews_apps/${{ env.DYNAMIC_HOST }}
-
-      # 2. Копіюємо docker-compose.yml у створену папку
+ 
       - name: Copy docker-compose to server
         if: ${{ github.event.inputs.action != 'destroy' }}
         uses: appleboy/scp-action@v0.1.7
@@ -128,9 +134,8 @@ jobs:
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           source: "my-review-app/docker-compose.yml"
           target: "/home/${{ secrets.SERVER_USER }}/reviews_apps/${{ env.DYNAMIC_HOST }}"
-          # Цей параметр прибирає папку "my-review-app" зі шляху, щоб файл поклався прямо в папку хоста
           strip_components: 1
-          
+ 
       - name: Deploy to GCP Server via SSH
         if: ${{ github.event.inputs.action != 'destroy' }}
         uses: appleboy/ssh-action@v1.0.3
@@ -138,26 +143,22 @@ jobs:
           host: ${{ secrets.SERVER_HOST }}
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
-          source: "./my-review-app/docker-compose.yml"
-          target: "/home/${{ secrets.SERVER_USER }}/reviews_apps/my-review-app"
           script: |
-            # 1. Логинимся в GitHub Container Registry на сервере GCP
             echo "${{ secrets.GITHUB_TOKEN }}" | docker login ${{ env.REGISTRY }} -u ${{ github.actor }} --password-stdin
-            # 2. Скачиваем свежий собранный образ
             docker pull ${{ env.REGISTRY }}/dmitriy282/my-app:${{ env.IMAGE_TAG }}
-            # 3. Переходим в директорию проекта на сервере
-            # ВАЖНО: Укажите здесь реальный путь к папке на ВАШЕМ сервере GCP, где лежит docker-compose.yml
             cd /home/${{ secrets.SERVER_USER }}/reviews_apps/${{ env.DYNAMIC_HOST }}
-            # 4. Передаем тег в окружение и перезапускаем docker compose
-            SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
-            echo "COMPOSE_PROJECT_NAME=${SHORT_SHA}" > .env
-            echo "DYNAMIC_HOST=${{ env.DYNAMIC_HOST }}" > .env
-            echo "IMAGE_TAG=${{ env.IMAGE_TAG }}" >> .env
-            echo "ROUTER_NAME=${SHORT_SHA}" >> .env
-            echo "REGISTRY=${{ env.REGISTRY }}" >> .env
-            
-            docker compose down # опционально, если нужно полностью пересоздать
+ 
+            cat > .env << EOF
+            COMPOSE_PROJECT_NAME=${{ env.ROUTER_NAME }}
+            DYNAMIC_HOST=${{ env.DYNAMIC_HOST }}
+            IMAGE_TAG=${{ env.IMAGE_TAG }}
+            ROUTER_NAME=${{ env.ROUTER_NAME }}
+            REGISTRY=${{ env.REGISTRY }}
+            EOF
+ 
+            docker compose down
             docker compose up -d
+ 
       - name: Destroy Environment (Destroy only)
         if: ${{ github.event.inputs.action == 'destroy' }}
         uses: appleboy/ssh-action@v1.0.3
@@ -167,19 +168,17 @@ jobs:
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
             APP_DIR="/home/${{ secrets.SERVER_USER }}/reviews_apps/${{ env.DYNAMIC_HOST }}"
-            
+ 
             if [ -d "$APP_DIR" ]; then
               echo "Зупиняємо та видаляємо контейнери в $APP_DIR..."
               cd $APP_DIR
-              # -v видаляє також прив'язані volume, якщо вони були створені
-              docker compose down -v 
-              
+              docker compose down -v
+ 
               echo "Видаляємо папку..."
               cd ..
               rm -rf $APP_DIR
-              
-              echo "Оточення ${{ env.DYNAMIC_HOST }} успішно видалено!"
+ 
+              echo "Оточення ${{ env.DYNAMIC_HOST }} успішно видалено! (Traefik не чіпали)"
             else
               echo "Папка $APP_DIR не знайдена. Схоже, оточення вже було видалено."
             fi
-     
