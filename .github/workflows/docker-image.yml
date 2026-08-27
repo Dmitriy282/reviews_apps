@@ -2,6 +2,9 @@ name: Deploy to GCP
 on:
   push:
     branches: [ "main" ]
+  pull_request:
+    # Запускать при открытии и обновлении PR в любую ветку
+    types: [opened, synchronize]  
   workflow_dispatch:
     inputs:
       action:
@@ -60,8 +63,14 @@ jobs:
         id: vars
         run: |
           COMMIT_MSG="${{ github.event.head_commit.message }}"
-          # Беремо назву гілки замість короткого SHA
-          RAW_BRANCH="${GITHUB_REF_NAME}"
+          
+          # Определяем название ветки в зависимости от события (PR или Push)
+          if [ "${{ github.event_name }}" == "pull_request" ]; then
+            RAW_BRANCH="${{ github.head_ref }}"
+          else
+            RAW_BRANCH="${{ github.ref_name }}"
+          fi
+          
           # Санітизуємо: слеші -> дефіси, нижній регістр (для валідного домену)
           SAFE_BRANCH=$(echo "$RAW_BRANCH" | tr '/' '-' | tr '[:upper:]' '[:lower:]')
           BASE_DOMAIN="34-176-118-128.sslip.io"
