@@ -1,288 +1,203 @@
-name: Review App
-
+name: Deploy to GCP
 on:
-  pull_request:
-    types:
-      - opened
-      - reopened
-      - synchronize
-      - closed
-
-permissions:
-  contents: read
-  packages: write
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'Виберіть дію: розгорнути чи видалити?'
+        required: true
+        default: 'deploy'
+        type: choice
+        options:
+          - deploy
+          - destroy
+      target_host:
+        description: 'Специфічний хост для видалення (наприклад, my-feature). Залиште порожнім, щоб використати поточний.'
+        required: false
+        type: string
+  # Если нужно деплоить еще и при пулл-реквестах, раскомментируйте строки ниже:
+  # pull_request:
+  #   types: [opened, synchronize]
 
 env:
   REGISTRY: ghcr.io
+  IMAGE_TAG: ${{ github.sha }}
 
 jobs:
-  # -------------------------------------------------------------------------
-  # Build and deploy
-  # -------------------------------------------------------------------------
-  deploy:
-    if: >
-      github.event.action != 'closed' &&
-      github.event.pull_request.head.repo.full_name == github.repository
-
+  build-and-deploy:
     runs-on: ubuntu-latest
-
-    concurrency:
-      group: review-${{ github.event.pull_request.number }}
-      cancel-in-progress: true
-
-    outputs:
-      review_url: ${{ steps.review.outputs.review_url }}
-
-    environment:
-      name: review/pr-${{ github.event.pull_request.number }}
-      url: ${{ steps.review.outputs.review_url }}
-
+    permissions:
+      contents: read
+      packages: write
     steps:
-      - name: Checkout
+      - name: Checkout code
         uses: actions/checkout@v4
-
-      - name: Calculate Review App variables
-        id: review
-        shell: bash
-        env:
-          PUBLIC_IP: ${{ vars.REVIEW_PUBLIC_IP }}
+      - name: Set image tag
+        if: ${{ github.event.inputs.action != 'destroy' }}
         run: |
-          set -euo pipefail
+          TIMESTAMP=$(date +%s)
+          SHA=$(echo ${{ github.sha }} | cut -c1-7)
+          echo "IMAGE_TAG=${TIMESTAMP}-${SHA}" >> $GITHUB_ENV
 
-          REVIEW_ID="review-${GITHUB_REPOSITORY_ID}-pr-${{ github.event.pull_request.number }}"
-          REVIEW_HOST="pr-${{ github.event.pull_request.number }}.${PUBLIC_IP//./-}.sslip.io"
-          IMAGE_NAME="$(echo "${GITHUB_REPOSITORY}" | tr '[:upper:]' '[:lower:]')"
-          IMAGE="${REGISTRY}/${IMAGE_NAME}:pr-${{ github.event.pull_request.number }}-${GITHUB_SHA}"
 
-          {
-            echo "review_id=${REVIEW_ID}"
-            echo "review_host=${REVIEW_HOST}"
-            echo "review_url=http://${REVIEW_HOST}"
-            echo "image=${IMAGE}"
-          } >> "$GITHUB_OUTPUT"
-
-          {
-            echo "REVIEW_ID=${REVIEW_ID}"
-            echo "REVIEW_HOST=${REVIEW_HOST}"
-            echo "REVIEW_URL=http://${REVIEW_HOST}"
-            echo "IMAGE=${IMAGE}"
-          } >> "$GITHUB_ENV"
-
-      - name: Log in to GitHub Container Registry
+      - name: Login to GHCR
+        if: ${{ github.event.inputs.action != 'destroy' }}
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Build and push image
-        uses: docker/build-push-action@v6
+      - name: Build and push Docker image
+        if: ${{ github.event.inputs.action != 'destroy' }}
+        uses: docker/build-push-action@v5.3.0
         with:
-          context: .
+          context: ./my-review-app
           push: true
-          tags: ${{ env.IMAGE }}
-          cache-from: type=gha,scope=review-app
-          cache-to: type=gha,mode=max,scope=review-app
-
-      - name: Configure SSH
-        shell: bash
-        env:
-          SSH_PRIVATE_KEY: ${{ secrets.REVIEW_SSH_PRIVATE_KEY }}
-          SSH_KNOWN_HOSTS: ${{ secrets.REVIEW_SSH_KNOWN_HOSTS }}
+          tags: ${{ env.REGISTRY }}/dmitriy282/my-app:${{ env.IMAGE_TAG }}
+      - name: Generate Dynamic Host for Traefik
+        id: vars
         run: |
-          set -euo pipefail
+          COMMIT_MSG="${{ github.event.head_commit.message }}"
+          # Беремо назву гілки замість короткого SHA
+          RAW_BRANCH="${GITHUB_REF_NAME}"
+          # Санітизуємо: слеші -> дефіси, нижній регістр (для валідного домену)
+          SAFE_BRANCH=$(echo "$RAW_BRANCH" | tr '/' '-' | tr '[:upper:]' '[:lower:]')
+          BASE_DOMAIN="34-176-118-128.sslip.io"
 
-          mkdir -p ~/.ssh
-          chmod 700 ~/.ssh
+          # Якщо передано кастомний хост через інпут (для видалення)
+          if [ "${{ github.event.inputs.target_host }}" != "" ]; then
+            HOST_VALUE="${{ github.event.inputs.target_host }}.${BASE_DOMAIN}"
+          else
+            # Шукаємо кастомний хост у форматі [host: назва] в повідомленні коміту
+            CUSTOM_HOST=$(echo "$COMMIT_MSG" | grep -oP '(?<=\[host: )[a-zA-Z0-9_-]+(?=\])' || echo "")
+            if [ -n "$CUSTOM_HOST" ]; then
+              HOST_VALUE="${CUSTOM_HOST}.${BASE_DOMAIN}"
+            else
+              HOST_VALUE="${SAFE_BRANCH}.${BASE_DOMAIN}"
+            fi
+          fi
 
-          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/id_ed25519
-          chmod 600 ~/.ssh/id_ed25519
-
-          printf '%s\n' "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
-          chmod 600 ~/.ssh/known_hosts
-
-      - name: Prepare Review App configuration
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          mkdir -p .review-deploy
-
-          cp docker-compose.review.yml .review-deploy/docker-compose.yml
-
-          cat > .review-deploy/runtime.env <<EOF
-          REVIEW_ID=${REVIEW_ID}
-          REVIEW_HOST=${REVIEW_HOST}
-          APP_IMAGE=${IMAGE}
-          APP_ENV=review
-          APP_URL=${REVIEW_URL}
-          EOF
-
-      - name: Copy configuration to Review host
-        shell: bash
-        env:
-          SSH_HOST: ${{ secrets.REVIEW_SSH_HOST }}
-          SSH_USER: ${{ secrets.REVIEW_SSH_USER }}
-        run: |
-          set -euo pipefail
-
-          REMOTE_DIR="/opt/review-apps/${REVIEW_ID}"
-
-          ssh "${SSH_USER}@${SSH_HOST}" \
-            "mkdir -p '${REMOTE_DIR}' && chmod 700 '${REMOTE_DIR}'"
-
-          scp \
-            .review-deploy/docker-compose.yml \
-            .review-deploy/runtime.env \
-            "${SSH_USER}@${SSH_HOST}:${REMOTE_DIR}/"
-
-      - name: Deploy Review App
-        shell: bash
-        env:
-          SSH_HOST: ${{ secrets.REVIEW_SSH_HOST }}
-          SSH_USER: ${{ secrets.REVIEW_SSH_USER }}
-          GHCR_USERNAME: ${{ github.actor }}
-          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-
-          REMOTE_DIR="/opt/review-apps/${REVIEW_ID}"
-
-          printf '%s' "$GHCR_TOKEN" |
-            ssh "${SSH_USER}@${SSH_HOST}" \
-              "docker login ghcr.io \
-                --username '${GHCR_USERNAME}' \
-                --password-stdin"
-
-          ssh "${SSH_USER}@${SSH_HOST}" "
-            set -eu
-
-            cd '${REMOTE_DIR}'
-
-            docker compose \
-              --project-name '${REVIEW_ID}' \
-              --env-file runtime.env \
-              pull
-
-            docker compose \
-              --project-name '${REVIEW_ID}' \
-              --env-file runtime.env \
-              up \
-              --detach \
-              --remove-orphans
-          "
-
-      - name: Wait for Review App
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          for attempt in $(seq 1 30); do
-            if curl \
-              --fail \
-              --silent \
-              --show-error \
-              --max-time 10 \
-              "${REVIEW_URL}/health"; then
-              echo "Review App is ready: ${REVIEW_URL}"
-              exit 0
+          echo "DYNAMIC_HOST=$HOST_VALUE" >> $GITHUB_ENV
+          echo "Згенерований хост: $HOST_VALUE"
+          
+      - name: Copy Traefik compose to its own folder
+        if: ${{ github.event.inputs.action != 'destroy' }}
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          source: "traefik/docker-compose.yml"
+          target: "/home/${{ secrets.SERVER_USER }}/traefik"
+          strip_components: 1
+       # --- НОВЫЙ ШАГ: Очистка старых контейнеров ---
+      - name: Remove all old containers
+        if: ${{ github.event.inputs.action != 'destroy' }}
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            echo "Очищаем все старые контейнеры..."
+            # Проверка нужна, чтобы команда не упала с ошибкой, если контейнеров нет
+            if [ "$(docker ps -q)" ]; then
+              docker rm -f $(docker ps -q)
+            else
+              echo "Нет запущенных контейнеров для удаления."
+            fi
+      - name: Ensure Traefik network + container are running
+        if: ${{ github.event.inputs.action != 'destroy' }}
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            mkdir -p /home/${{ secrets.SERVER_USER }}/traefik/letsencrypt
+            docker network inspect traefik-net >/dev/null 2>&1 || docker network create traefik-net
+            cd /home/${{ secrets.SERVER_USER }}/traefik
+            if [ -z "$(docker ps -q -f name=^traefik$)" ]; then
+              echo "Traefik не запущений — запускаю..."
+              docker compose up -d
+            else
+              echo "Traefik вже працює, не чіпаю його."
             fi
 
-            echo "Waiting for Review App (${attempt}/30)..."
-            sleep 5
-          done
+      - name: Create app directory on server
+        if: ${{ github.event.inputs.action != 'destroy' }}
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            # Створюємо папку з назвою хоста (наприклад, a1b2c3d.34-176-31-27.sslip.io)
+            mkdir -p /home/${{ secrets.SERVER_USER }}/reviews_apps/${{ env.DYNAMIC_HOST }}
 
-          echo "Review App did not become healthy"
-          exit 1
+      # 2. Копіюємо docker-compose.yml у створену папку
+      - name: Copy docker-compose to server
+        if: ${{ github.event.inputs.action != 'destroy' }}
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          source: "my-review-app/docker-compose.yml"
+          target: "/home/${{ secrets.SERVER_USER }}/reviews_apps/${{ env.DYNAMIC_HOST }}"
+          # Цей параметр прибирає папку "my-review-app" зі шляху, щоб файл поклався прямо в папку хоста
+          strip_components: 1
 
-      - name: Show logs after failed deployment
-        if: failure()
-        shell: bash
-        env:
-          SSH_HOST: ${{ secrets.REVIEW_SSH_HOST }}
-          SSH_USER: ${{ secrets.REVIEW_SSH_USER }}
-        run: |
-          REMOTE_DIR="/opt/review-apps/${REVIEW_ID}"
+      - name: Deploy to GCP Server via SSH
+        if: ${{ github.event.inputs.action != 'destroy' }}
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          source: "./my-review-app/docker-compose.yml"
+          target: "/home/${{ secrets.SERVER_USER }}/reviews_apps/my-review-app"
+          script: |
+            # 1. Логинимся в GitHub Container Registry на сервере GCP
+            echo "${{ secrets.GITHUB_TOKEN }}" | docker login ${{ env.REGISTRY }} -u ${{ github.actor }} --password-stdin
+            # 2. Скачиваем свежий собранный образ
+            docker pull ${{ env.REGISTRY }}/dmitriy282/my-app:${{ env.IMAGE_TAG }}
+            # 3. Переходим в директорию проекта на сервере
+            # ВАЖНО: Укажите здесь реальный путь к папке на ВАШЕМ сервере GCP, где лежит docker-compose.yml
+            cd /home/${{ secrets.SERVER_USER }}/reviews_apps/${{ env.DYNAMIC_HOST }}
+            # 4. Передаем тег в окружение и перезапускаем docker compose
+            SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
+            echo "COMPOSE_PROJECT_NAME=${SHORT_SHA}" > .env
+            echo "DYNAMIC_HOST=${{ env.DYNAMIC_HOST }}" > .env
+            echo "IMAGE_TAG=${{ env.IMAGE_TAG }}" >> .env
+            echo "ROUTER_NAME=${SHORT_SHA}" >> .env
+            echo "REGISTRY=${{ env.REGISTRY }}" >> .env
 
-          ssh "${SSH_USER}@${SSH_HOST}" "
-            if [ -d '${REMOTE_DIR}' ]; then
-              cd '${REMOTE_DIR}'
+            docker compose down # опционально, если нужно полностью пересоздать
+            docker compose up -d
+      - name: Destroy Environment (Destroy only)
+        if: ${{ github.event.inputs.action == 'destroy' }}
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            APP_DIR="/home/${{ secrets.SERVER_USER }}/reviews_apps/${{ env.DYNAMIC_HOST }}"
 
-              docker compose \
-                --project-name '${REVIEW_ID}' \
-                --env-file runtime.env \
-                logs --tail=200
+            if [ -d "$APP_DIR" ]; then
+              echo "Зупиняємо та видаляємо контейнери в $APP_DIR..."
+              cd $APP_DIR
+              # -v видаляє також прив'язані volume, якщо вони були створені
+              docker compose down -v
+
+              echo "Видаляємо папку..."
+              cd ..
+              rm -rf $APP_DIR
+
+              echo "Оточення ${{ env.DYNAMIC_HOST }} успішно видалено!"
+            else
+              echo "Папка $APP_DIR не знайдена. Схоже, оточення вже було видалено."
             fi
-          " || true
-
-  # -------------------------------------------------------------------------
-  # Remove Review App when PR is closed
-  # -------------------------------------------------------------------------
-  cleanup:
-    if: >
-      github.event.action == 'closed' &&
-      github.event.pull_request.head.repo.full_name == github.repository
-
-    runs-on: ubuntu-latest
-
-    concurrency:
-      group: review-${{ github.event.pull_request.number }}
-      cancel-in-progress: false
-
-    steps:
-      - name: Calculate Review App variables
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          REVIEW_ID="review-${GITHUB_REPOSITORY_ID}-pr-${{ github.event.pull_request.number }}"
-
-          echo "REVIEW_ID=${REVIEW_ID}" >> "$GITHUB_ENV"
-
-      - name: Configure SSH
-        shell: bash
-        env:
-          SSH_PRIVATE_KEY: ${{ secrets.REVIEW_SSH_PRIVATE_KEY }}
-          SSH_KNOWN_HOSTS: ${{ secrets.REVIEW_SSH_KNOWN_HOSTS }}
-        run: |
-          set -euo pipefail
-
-          mkdir -p ~/.ssh
-          chmod 700 ~/.ssh
-
-          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/id_ed25519
-          chmod 600 ~/.ssh/id_ed25519
-
-          printf '%s\n' "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
-          chmod 600 ~/.ssh/known_hosts
-
-      - name: Remove Review App
-        shell: bash
-        env:
-          SSH_HOST: ${{ secrets.REVIEW_SSH_HOST }}
-          SSH_USER: ${{ secrets.REVIEW_SSH_USER }}
-        run: |
-          set -euo pipefail
-
-          REMOTE_DIR="/opt/review-apps/${REVIEW_ID}"
-
-          ssh "${SSH_USER}@${SSH_HOST}" "
-            set -eu
-
-            if [ -f '${REMOTE_DIR}/docker-compose.yml' ]; then
-              cd '${REMOTE_DIR}'
-
-              docker compose \
-                --project-name '${REVIEW_ID}' \
-                --env-file runtime.env \
-                down \
-                --volumes \
-                --remove-orphans \
-                --timeout 30
-            fi
-
-            rm -rf '${REMOTE_DIR}'
-          "
