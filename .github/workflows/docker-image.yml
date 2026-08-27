@@ -56,11 +56,14 @@ jobs:
           context: ./my-review-app
           push: true
           tags: ${{ env.REGISTRY }}/dmitriy282/my-app:${{ env.IMAGE_TAG }}
-      - name: Generate Dynamic Host for Traefik
+            - name: Generate Dynamic Host for Traefik
         id: vars
         run: |
           COMMIT_MSG="${{ github.event.head_commit.message }}"
-          SHORT_SHA="${GITHUB_SHA::7}"
+          # Беремо назву гілки замість короткого SHA
+          RAW_BRANCH="${GITHUB_REF_NAME}"
+          # Санітизуємо: слеші -> дефіси, нижній регістр (для валідного домену)
+          SAFE_BRANCH=$(echo "$RAW_BRANCH" | tr '/' '-' | tr '[:upper:]' '[:lower:]')
           BASE_DOMAIN="34-176-118-128.sslip.io"
 
           # Якщо передано кастомний хост через інпут (для видалення)
@@ -72,12 +75,13 @@ jobs:
             if [ -n "$CUSTOM_HOST" ]; then
               HOST_VALUE="${CUSTOM_HOST}.${BASE_DOMAIN}"
             else
-              HOST_VALUE="${SHORT_SHA}.${BASE_DOMAIN}"
+              HOST_VALUE="${SAFE_BRANCH}.${BASE_DOMAIN}"
             fi
           fi
 
           echo "DYNAMIC_HOST=$HOST_VALUE" >> $GITHUB_ENV
           echo "Згенерований хост: $HOST_VALUE"
+          
       - name: Copy Traefik compose to its own folder
         if: ${{ github.event.inputs.action != 'destroy' }}
         uses: appleboy/scp-action@v0.1.7
