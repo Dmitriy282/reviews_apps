@@ -186,6 +186,46 @@ jobs:
 
             docker compose down # опционально, если нужно полностью пересоздать
             docker compose up -d
+      - name: Dump main DB
+        if: ${{ github.ref_name == 'main' && github.event.inputs.action != 'destroy' }}
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            mkdir -p /home/${{ secrets.SERVER_USER }}/db_dumps
+            cd /home/${{ secrets.SERVER_USER }}/reviews_apps/${{ env.DYNAMIC_HOST }}
+            docker compose exec -T db pg_dump -U space_admin -Fc -d space_logbook \
+              > /home/${{ secrets.SERVER_USER }}/db_dumps/latest.dump
+            echo "Дамп готовий: $(date)"
+      - name: Restore DB dump into review app
+        if: ${{ github.ref_name != 'main' && github.event.inputs.action != 'destroy' }}
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            cd /home/${{ secrets.SERVER_USER }}/reviews_apps/${{ env.DYNAMIC_HOST }}
+            DUMP_FILE="/home/${{ secrets.SERVER_USER }}/db_dumps/latest.dump"
+
+            if [ ! -f "$DUMP_FILE" ]; then
+              echo "Дамп ще не існує, пропускаю restore (БД буде порожня)"
+              exit 0
+            fi
+
+            # чекаємо, поки db контейнер стане healthy
+            for i in $(seq 1 30); do
+              STATUS=$(docker compose exec -T db pg_isready -U space_admin || echo "not ready")
+              echo "$STATUS"
+              [[ "$STATUS" == *"accepting connections"* ]] && break
+              sleep 2
+            done
+
+            cat "$DUMP_FILE" | docker compose exec -T db pg_restore \
+              --clean --if-exists --no-owner -U space_admin -d space_logbook
+            echo "Restore завершено"
       - name: Destroy Environment (Destroy only)
         if: ${{ github.event.inputs.action == 'destroy' }}
         uses: appleboy/ssh-action@v1.0.3
