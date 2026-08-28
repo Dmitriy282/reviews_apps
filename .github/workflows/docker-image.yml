@@ -137,27 +137,7 @@ jobs:
           target: "/home/${{ secrets.SERVER_USER }}/reviews_apps/${{ env.DYNAMIC_HOST }}"
           strip_components: 1
 
-      - name: Dump main DB (before redeploying, so review apps get freshest data)
-        if: ${{ github.ref_name != 'main' && github.event.inputs.action != 'destroy' }}
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.SERVER_HOST }}
-          username: ${{ secrets.SERVER_USER }}
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          script: |
-            MAIN_DIR="/home/${{ secrets.SERVER_USER }}/reviews_apps/34-176-118-128.sslip.io"
-            mkdir -p /home/${{ secrets.SERVER_USER }}/db_dumps
-
-            if [ ! -d "$MAIN_DIR" ]; then
-              echo "Папка main ($MAIN_DIR) ще не існує, пропускаю дамп."
-              exit 0
-            fi
-
-            cd "$MAIN_DIR"
-            docker compose exec -T db pg_dump -U space_admin -Fc -d space_logbook \
-              -t log_entries --data-only \
-              > /home/${{ secrets.SERVER_USER }}/db_dumps/latest.dump
-            echo "Дамп log_entries готовий: $(date)"
+     
 
       - name: Deploy to GCP Server via SSH
         if: ${{ github.event.inputs.action != 'destroy' }}
@@ -180,6 +160,28 @@ jobs:
 
             docker compose down
             docker compose up -d
+
+      - name: Dump main DB (before redeploying, so review apps get freshest data)
+        if: ${{ github.ref_name != 'main' && github.event.inputs.action != 'destroy' }}
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            MAIN_DIR="/home/${{ secrets.SERVER_USER }}/reviews_apps/34-176-118-128.sslip.io"
+            mkdir -p /home/${{ secrets.SERVER_USER }}/db_dumps
+
+            if [ ! -d "$MAIN_DIR" ]; then
+              echo "Папка main ($MAIN_DIR) ще не існує, пропускаю дамп."
+              exit 0
+            fi
+
+            cd "$MAIN_DIR"
+            docker compose exec -T db pg_dump -U space_admin -Fc -d space_logbook \
+              -t log_entries --data-only \
+              > /home/${{ secrets.SERVER_USER }}/db_dumps/latest.dump
+            echo "Дамп log_entries готовий: $(date)"
 
       - name: Restore log_entries into review app
         if: ${{ github.ref_name != 'main' && github.event.inputs.action != 'destroy' }}
