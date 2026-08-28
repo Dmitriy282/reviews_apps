@@ -178,9 +178,9 @@ jobs:
             fi
 
             cd "$MAIN_DIR"
-            docker compose exec -T db pg_dump -U space_admin -Fc -d space_logbook \
-              -t log_entries --data-only \
-              > /home/${{ secrets.SERVER_USER }}/db_dumps/latest.dump
+            docker compose exec -T db pg_dump -U space_admin -d space_logbook \
+              -t log_entries --data-only --inserts \
+              > /home/${{ secrets.SERVER_USER }}/db_dumps/latest.sql
             echo "Дамп log_entries готовий: $(date)"
 
       - name: Restore log_entries into review app
@@ -192,7 +192,7 @@ jobs:
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
             cd /home/${{ secrets.SERVER_USER }}/reviews_apps/${{ env.DYNAMIC_HOST }}
-            DUMP_FILE="/home/${{ secrets.SERVER_USER }}/db_dumps/latest.dump"
+            DUMP_FILE="/home/${{ secrets.SERVER_USER }}/db_dumps/latest.sql"
 
             if [ ! -f "$DUMP_FILE" ]; then
               echo "Дамп ще не існує, пропускаю restore (БД буде порожня)"
@@ -224,13 +224,12 @@ jobs:
               exit 0
             fi
 
-            # Очищаем таблицу перед загрузкой дампа, чтобы избежать дубликатов при синхронизации PR
-            echo "Очищення старої таблиці перед відновленням..."
-            docker compose exec -T db psql -U space_admin -d space_logbook -c "TRUNCATE TABLE log_entries CASCADE;"
-            
-            cat "$DUMP_FILE" | docker compose exec -T db pg_restore \
-              --data-only --disable-triggers --no-owner \
-              -U space_admin -d space_logbook
+            # Очищаем таблицу
+            docker compose exec -T db psql -U space_admin -d space_logbook -c \
+              "TRUNCATE log_entries CASCADE;"
+
+            # Восстанавливаем через psql
+            cat "$DUMP_FILE" | docker compose exec -T db psql -U space_admin -d space_logbook
             echo "Restore log_entries завершено"
 
       - name: Destroy Environment (Destroy only)
