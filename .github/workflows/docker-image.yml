@@ -1,251 +1,252 @@
 name: Deploy to GCP
 on:
-  push:
-    branches: [ "main" ]
-  pull_request:
-    # Запускать при открытии и обновлении PR в любую ветку
-    types: [opened, synchronize]  
-  workflow_dispatch:
-    inputs:
-      action:
-        description: 'Виберіть дію: розгорнути чи видалити?'
-        required: true
-        default: 'deploy'
-        type: choice
-        options:
-          - deploy
-          - destroy
-      target_host:
-        description: 'Специфічний хост для видалення (наприклад, my-feature). Залиште порожнім, щоб використати поточний.'
-        required: false
-        type: string
-  # Если нужно деплоить еще и при пулл-реквестах, раскомментируйте строки ниже:
-  # pull_request:
-  #   types: [opened, synchronize]
+  push:
+    branches: [ "main" ]
+  pull_request:
+    types: [opened, synchronize]
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'Виберіть дію: розгорнути чи видалити?'
+        required: true
+        default: 'deploy'
+        type: choice
+        options:
+          - deploy
+          - destroy
+      target_host:
+        description: 'Специфічний хост для видалення (наприклад, my-feature). Залиште порожнім, щоб використати поточний.'
+        required: false
+        type: string
 
 env:
-  REGISTRY: ghcr.io
-  IMAGE_TAG: ${{ github.sha }}
+  REGISTRY: ghcr.io
+  IMAGE_TAG: ${{ github.sha }}
 
 jobs:
-  build-and-deploy:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-      - name: Set image tag
-        if: ${{ github.event.inputs.action != 'destroy' }}
-        run: |
-          TIMESTAMP=$(date +%s)
-          SHA=$(echo ${{ github.sha }} | cut -c1-7)
-          echo "IMAGE_TAG=${TIMESTAMP}-${SHA}" >> $GITHUB_ENV
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
 
+      - name: Set image tag
+        if: ${{ github.event.inputs.action != 'destroy' }}
+        run: |
+          TIMESTAMP=$(date +%s)
+          SHA=$(echo ${{ github.sha }} | cut -c1-7)
+          echo "IMAGE_TAG=${TIMESTAMP}-${SHA}" >> $GITHUB_ENV
 
-      - name: Login to GHCR
-        if: ${{ github.event.inputs.action != 'destroy' }}
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Login to GHCR
+        if: ${{ github.event.inputs.action != 'destroy' }}
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push Docker image
-        if: ${{ github.event.inputs.action != 'destroy' }}
-        uses: docker/build-push-action@v5.3.0
-        with:
-          context: ./my-review-app
-          push: true
-          tags: ${{ env.REGISTRY }}/dmitriy282/my-app:${{ env.IMAGE_TAG }}
-      - name: Generate Dynamic Host for Traefik
-        id: vars
-        run: |
-          COMMIT_MSG="${{ github.event.head_commit.message }}"
-          
-          if [ "${{ github.event_name }}" == "pull_request" ]; then
-            RAW_BRANCH="${{ github.head_ref }}"
-          else
-            RAW_BRANCH="${{ github.ref_name }}"
-          fi
-          
-          SAFE_BRANCH=$(echo "$RAW_BRANCH" | tr '/' '-' | tr '[:upper:]' '[:lower:]')
-          BASE_DOMAIN="34-176-118-128.sslip.io"
+      - name: Build and push Docker image
+        if: ${{ github.event.inputs.action != 'destroy' }}
+        uses: docker/build-push-action@v5.3.0
+        with:
+          context: ./my-review-app
+          push: true
+          tags: ${{ env.REGISTRY }}/dmitriy282/my-app:${{ env.IMAGE_TAG }}
 
-          if [ "${{ github.event.inputs.target_host }}" != "" ]; then
-            HOST_VALUE="${{ github.event.inputs.target_host }}.${BASE_DOMAIN}"
-          elif [ "$SAFE_BRANCH" == "main" ]; then
-            # Для main — без префіксу гілки, чистий базовий домен
-            HOST_VALUE="${BASE_DOMAIN}"
-          else
-            CUSTOM_HOST=$(echo "$COMMIT_MSG" | grep -oP '(?<=\[host: )[a-zA-Z0-9_-]+(?=\])' || echo "")
-            if [ -n "$CUSTOM_HOST" ]; then
-              HOST_VALUE="${CUSTOM_HOST}.${BASE_DOMAIN}"
-            else
-              HOST_VALUE="${SAFE_BRANCH}.${BASE_DOMAIN}"
-            fi
-          fi
+      - name: Generate Dynamic Host for Traefik
+        id: vars
+        run: |
+          COMMIT_MSG="${{ github.event.head_commit.message }}"
 
-          echo "DYNAMIC_HOST=$HOST_VALUE" >> $GITHUB_ENV
-          echo "Згенерований хост: $HOST_VALUE"
-          
-      - name: Copy Traefik compose to its own folder
-        if: ${{ github.event.inputs.action != 'destroy' }}
-        uses: appleboy/scp-action@v0.1.7
-        with:
-          host: ${{ secrets.SERVER_HOST }}
-          username: ${{ secrets.SERVER_USER }}
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          source: "traefik/docker-compose.yml"
-          target: "/home/${{ secrets.SERVER_USER }}/traefik"
-          strip_components: 1
-       # --- НОВЫЙ ШАГ: Очистка старых контейнеров ---
-      - name: Remove all old containers
-        if: ${{ github.event.inputs.action != 'destroy' }}
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.SERVER_HOST }}
-          username: ${{ secrets.SERVER_USER }}
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          script: |
-            echo "Очищаем все старые контейнеры..."
-            # Проверка нужна, чтобы команда не упала с ошибкой, если контейнеров нет
-            if [ "$(docker ps -q)" ]; then
-              docker rm -f $(docker ps -q)
-            else
-              echo "Нет запущенных контейнеров для удаления."
-            fi
-      - name: Ensure Traefik network + container are running
-        if: ${{ github.event.inputs.action != 'destroy' }}
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.SERVER_HOST }}
-          username: ${{ secrets.SERVER_USER }}
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          script: |
-            mkdir -p /home/${{ secrets.SERVER_USER }}/traefik/letsencrypt
-            docker network inspect traefik-net >/dev/null 2>&1 || docker network create traefik-net
-            cd /home/${{ secrets.SERVER_USER }}/traefik
-            if [ -z "$(docker ps -q -f name=^traefik$)" ]; then
-              echo "Traefik не запущений — запускаю..."
-              docker compose up -d
-            else
-              echo "Traefik вже працює, не чіпаю його."
-            fi
+          if [ "${{ github.event_name }}" == "pull_request" ]; then
+            RAW_BRANCH="${{ github.head_ref }}"
+          else
+            RAW_BRANCH="${{ github.ref_name }}"
+          fi
 
-      - name: Create app directory on server
-        if: ${{ github.event.inputs.action != 'destroy' }}
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.SERVER_HOST }}
-          username: ${{ secrets.SERVER_USER }}
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          script: |
-            # Створюємо папку з назвою хоста (наприклад, a1b2c3d.34-176-31-27.sslip.io)
-            mkdir -p /home/${{ secrets.SERVER_USER }}/reviews_apps/${{ env.DYNAMIC_HOST }}
+          SAFE_BRANCH=$(echo "$RAW_BRANCH" | tr '/' '-' | tr '[:upper:]' '[:lower:]')
+          BASE_DOMAIN="34-176-118-128.sslip.io"
 
-      # 2. Копіюємо docker-compose.yml у створену папку
-      - name: Copy docker-compose to server
-        if: ${{ github.event.inputs.action != 'destroy' }}
-        uses: appleboy/scp-action@v0.1.7
-        with:
-          host: ${{ secrets.SERVER_HOST }}
-          username: ${{ secrets.SERVER_USER }}
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          source: "my-review-app/docker-compose.yml"
-          target: "/home/${{ secrets.SERVER_USER }}/reviews_apps/${{ env.DYNAMIC_HOST }}"
-          # Цей параметр прибирає папку "my-review-app" зі шляху, щоб файл поклався прямо в папку хоста
-          strip_components: 1
+          if [ "${{ github.event.inputs.target_host }}" != "" ]; then
+            HOST_VALUE="${{ github.event.inputs.target_host }}.${BASE_DOMAIN}"
+          elif [ "$SAFE_BRANCH" == "main" ]; then
+            # Для main — без префіксу гілки, чистий базовий домен
+            HOST_VALUE="${BASE_DOMAIN}"
+          else
+            CUSTOM_HOST=$(echo "$COMMIT_MSG" | grep -oP '(?<=\[host: )[a-zA-Z0-9_-]+(?=\])' || echo "")
+            if [ -n "$CUSTOM_HOST" ]; then
+              HOST_VALUE="${CUSTOM_HOST}.${BASE_DOMAIN}"
+            else
+              HOST_VALUE="${SAFE_BRANCH}.${BASE_DOMAIN}"
+            fi
+          fi
 
-      - name: Deploy to GCP Server via SSH
-        if: ${{ github.event.inputs.action != 'destroy' }}
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.SERVER_HOST }}
-          username: ${{ secrets.SERVER_USER }}
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          source: "./my-review-app/docker-compose.yml"
-          target: "/home/${{ secrets.SERVER_USER }}/reviews_apps/my-review-app"
-          script: |
-            # 1. Логинимся в GitHub Container Registry на сервере GCP
-            echo "${{ secrets.GITHUB_TOKEN }}" | docker login ${{ env.REGISTRY }} -u ${{ github.actor }} --password-stdin
-            # 2. Скачиваем свежий собранный образ
-            docker pull ${{ env.REGISTRY }}/dmitriy282/my-app:${{ env.IMAGE_TAG }}
-            # 3. Переходим в директорию проекта на сервере
-            # ВАЖНО: Укажите здесь реальный путь к папке на ВАШЕМ сервере GCP, где лежит docker-compose.yml
-            cd /home/${{ secrets.SERVER_USER }}/reviews_apps/${{ env.DYNAMIC_HOST }}
-            # 4. Передаем тег в окружение и перезапускаем docker compose
-            SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
-            echo "COMPOSE_PROJECT_NAME=${SHORT_SHA}" > .env
-            echo "DYNAMIC_HOST=${{ env.DYNAMIC_HOST }}" > .env
-            echo "IMAGE_TAG=${{ env.IMAGE_TAG }}" >> .env
-            echo "ROUTER_NAME=${SHORT_SHA}" >> .env
-            echo "REGISTRY=${{ env.REGISTRY }}" >> .env
+          echo "DYNAMIC_HOST=$HOST_VALUE" >> $GITHUB_ENV
+          echo "Згенерований хост: $HOST_VALUE"
 
-            docker compose down # опционально, если нужно полностью пересоздать
-            docker compose up -d
-      - name: Dump main DB
-        if: ${{ github.ref_name == 'main' && github.event.inputs.action != 'destroy' }}
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.SERVER_HOST }}
-          username: ${{ secrets.SERVER_USER }}
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          script: |
-            mkdir -p /home/${{ secrets.SERVER_USER }}/db_dumps
-            cd /home/${{ secrets.SERVER_USER }}/reviews_apps/${{ env.DYNAMIC_HOST }}
-            docker compose exec -T db pg_dump -U space_admin -d space_logbook \
-            -t log_entries --data-only \
-            > /home/${{ secrets.SERVER_USER }}/db_dumps/latest.sql
-      - name: Restore log_entries into review app
-        if: ${{ github.ref_name != 'main' && github.event.inputs.action != 'destroy' }}
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.SERVER_HOST }}
-          username: ${{ secrets.SERVER_USER }}
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          script: |
-            cd /home/${{ secrets.SERVER_USER }}/reviews_apps/34-176-118-128.sslip.io
-            DUMP_FILE="/home/${{ secrets.SERVER_USER }}/db_dumps/latest.dump"
+      - name: Copy Traefik compose to its own folder
+        if: ${{ github.event.inputs.action != 'destroy' }}
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          source: "traefik/docker-compose.yml"
+          target: "/home/${{ secrets.SERVER_USER }}/traefik"
+          strip_components: 1
 
-            if [ ! -f "$DUMP_FILE" ]; then
-              echo "Дамп ще не існує, пропускаю restore"
-              exit 0
-            fi
+      - name: Ensure Traefik network + container are running
+        if: ${{ github.event.inputs.action != 'destroy' }}
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            mkdir -p /home/${{ secrets.SERVER_USER }}/traefik/letsencrypt
+            docker network inspect traefik-net >/dev/null 2>&1 || docker network create traefik-net
+            cd /home/${{ secrets.SERVER_USER }}/traefik
+            if [ -z "$(docker ps -q -f name=^traefik$)" ]; then
+              echo "Traefik не запущений — запускаю..."
+              docker compose up -d
+            else
+              echo "Traefik вже працює, не чіпаю його."
+            fi
 
-            for i in $(seq 1 30); do
-              STATUS=$(docker compose exec -T db pg_isready -U space_admin || echo "not ready")
-              [[ "$STATUS" == *"accepting connections"* ]] && break
-              sleep 2
-            done
+      - name: Create app directory on server
+        if: ${{ github.event.inputs.action != 'destroy' }}
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            mkdir -p /home/${{ secrets.SERVER_USER }}/reviews_apps/${{ env.DYNAMIC_HOST }}
 
-            cat "$DUMP_FILE" | docker compose exec -T db pg_restore \
-              --data-only --disable-triggers --no-owner \
-              -U space_admin -d space_logbook
-            echo "Restore log_entries завершено"
-            
-      - name: Destroy Environment (Destroy only)
-        if: ${{ github.event.inputs.action == 'destroy' }}
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.SERVER_HOST }}
-          username: ${{ secrets.SERVER_USER }}
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          script: |
-            APP_DIR="/home/${{ secrets.SERVER_USER }}/reviews_apps/${{ env.DYNAMIC_HOST }}"
+      - name: Copy docker-compose to server
+        if: ${{ github.event.inputs.action != 'destroy' }}
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          source: "my-review-app/docker-compose.yml"
+          target: "/home/${{ secrets.SERVER_USER }}/reviews_apps/${{ env.DYNAMIC_HOST }}"
+          strip_components: 1
 
-            if [ -d "$APP_DIR" ]; then
-              echo "Зупиняємо та видаляємо контейнери в $APP_DIR..."
-              cd $APP_DIR
-              # -v видаляє також прив'язані volume, якщо вони були створені
-              docker compose down -v
+      - name: Dump main DB (before redeploying, so review apps get freshest data)
+        if: ${{ github.ref_name != 'main' && github.event.inputs.action != 'destroy' }}
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            MAIN_DIR="/home/${{ secrets.SERVER_USER }}/reviews_apps/34-176-118-128.sslip.io"
+            mkdir -p /home/${{ secrets.SERVER_USER }}/db_dumps
 
-              echo "Видаляємо папку..."
-              cd ..
-              rm -rf $APP_DIR
+            if [ ! -d "$MAIN_DIR" ]; then
+              echo "Папка main ($MAIN_DIR) ще не існує, пропускаю дамп."
+              exit 0
+            fi
 
-              echo "Оточення ${{ env.DYNAMIC_HOST }} успішно видалено!"
-            else
-              echo "Папка $APP_DIR не знайдена. Схоже, оточення вже було видалено."
-            fi
+            cd "$MAIN_DIR"
+            docker compose exec -T db pg_dump -U space_admin -Fc -d space_logbook \
+              -t log_entries --data-only \
+              > /home/${{ secrets.SERVER_USER }}/db_dumps/latest.dump
+            echo "Дамп log_entries готовий: $(date)"
+
+      - name: Deploy to GCP Server via SSH
+        if: ${{ github.event.inputs.action != 'destroy' }}
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            echo "${{ secrets.GITHUB_TOKEN }}" | docker login ${{ env.REGISTRY }} -u ${{ github.actor }} --password-stdin
+            docker pull ${{ env.REGISTRY }}/dmitriy282/my-app:${{ env.IMAGE_TAG }}
+            cd /home/${{ secrets.SERVER_USER }}/reviews_apps/${{ env.DYNAMIC_HOST }}
+
+            SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
+            echo "COMPOSE_PROJECT_NAME=${SHORT_SHA}" > .env
+            echo "DYNAMIC_HOST=${{ env.DYNAMIC_HOST }}" >> .env
+            echo "IMAGE_TAG=${{ env.IMAGE_TAG }}" >> .env
+            echo "ROUTER_NAME=${SHORT_SHA}" >> .env
+            echo "REGISTRY=${{ env.REGISTRY }}" >> .env
+
+            docker compose down
+            docker compose up -d
+
+      - name: Restore log_entries into review app
+        if: ${{ github.ref_name != 'main' && github.event.inputs.action != 'destroy' }}
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            cd /home/${{ secrets.SERVER_USER }}/reviews_apps/${{ env.DYNAMIC_HOST }}
+            DUMP_FILE="/home/${{ secrets.SERVER_USER }}/db_dumps/latest.dump"
+
+            if [ ! -f "$DUMP_FILE" ]; then
+              echo "Дамп ще не існує, пропускаю restore (БД буде порожня)"
+              exit 0
+            fi
+
+            echo "Чекаю на готовність db..."
+            for i in $(seq 1 30); do
+              STATUS=$(docker compose exec -T db pg_isready -U space_admin || echo "not ready")
+              [[ "$STATUS" == *"accepting connections"* ]] && break
+              sleep 2
+            done
+
+            echo "Чекаю на появу таблиці log_entries (міграції app)..."
+            TABLE_EXISTS=""
+            for i in $(seq 1 30); do
+              TABLE_EXISTS=$(docker compose exec -T db psql -U space_admin -d space_logbook -tAc \
+                "SELECT to_regclass('public.log_entries');")
+              if [[ "$TABLE_EXISTS" == *"log_entries"* ]]; then
+                echo "Таблиця знайдена."
+                break
+              fi
+              echo "Ще немає таблиці, чекаю... ($i/30)"
+              sleep 2
+            done
+
+            if [[ "$TABLE_EXISTS" != *"log_entries"* ]]; then
+              echo "Таблиця log_entries так і не з'явилась за 60с. Пропускаю restore."
+              exit 0
+            fi
+
+            cat "$DUMP_FILE" | docker compose exec -T db pg_restore \
+              --data-only --disable-triggers --no-owner \
+              -U space_admin -d space_logbook
+            echo "Restore log_entries завершено"
+
+      - name: Destroy Environment (Destroy only)
+        if: ${{ github.event.inputs.action == 'destroy' }}
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            APP_DIR="/home/${{ secrets.SERVER_USER }}/reviews_apps/${{ env.DYNAMIC_HOST }}"
+
+            if [ -d "$APP_DIR" ]; then
+              echo "Зупиняємо та видаляємо контейнери в $APP_DIR..."
+              cd $APP_DIR
+              docker compose down -v
+
+              echo "Видаляємо папку..."
+              cd ..
+              rm -rf $APP_DIR
+
+              echo "Оточення ${{ env.DYNAMIC_HOST }} успішно видалено!"
+            else
+              echo "Папка $APP_DIR не знайдена. Схоже, оточення вже було видалено."
+            fi
