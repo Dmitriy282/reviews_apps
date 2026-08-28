@@ -224,6 +224,10 @@ jobs:
               exit 0
             fi
 
+            # Очищаем таблицу перед загрузкой дампа, чтобы избежать дубликатов при синхронизации PR
+            echo "Очищення старої таблиці перед відновленням..."
+            docker compose exec -T db psql -U space_admin -d space_logbook -c "TRUNCATE TABLE log_entries CASCADE;"
+            
             cat "$DUMP_FILE" | docker compose exec -T db pg_restore \
               --data-only --disable-triggers --no-owner \
               -U space_admin -d space_logbook
