@@ -151,6 +151,10 @@ jobs:
             docker pull ${{ env.REGISTRY }}/dmitriy282/my-app:${{ env.IMAGE_TAG }}
             cd /home/${{ secrets.SERVER_USER }}/reviews_apps/${{ env.DYNAMIC_HOST }}
 
+            if [ -f .env ]; then
+              docker compose down -v
+            fi
+            
             SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
             echo "COMPOSE_PROJECT_NAME=${SHORT_SHA}" > .env
             echo "DYNAMIC_HOST=${{ env.DYNAMIC_HOST }}" >> .env
@@ -170,7 +174,7 @@ jobs:
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
             MAIN_DIR="/home/${{ secrets.SERVER_USER }}/reviews_apps/34-176-118-128.sslip.io"
-            mkdir -p /home/${{ secrets.SERVER_USER }}/db_dumps
+            DUMP_FILE="/home/${{ secrets.SERVER_USER }}/db_dumps/latest.sql"
 
             if [ ! -d "$MAIN_DIR" ]; then
               echo "Папка main ($MAIN_DIR) ще не існує, пропускаю дамп."
@@ -181,6 +185,11 @@ jobs:
             docker compose exec -T db pg_dump -U space_admin -d space_logbook \
               -t log_entries --data-only --inserts \
               > /home/${{ secrets.SERVER_USER }}/db_dumps/latest.sql
+            if [ ! -s "$DUMP_FILE" ]; then
+              echo "УВАГА: дамп порожній! pg_dump, можливо, не знайшов контейнер або таблиця пуста."
+              cat "$DUMP_FILE"
+              exit 1
+            fi
             echo "Дамп log_entries готовий: $(date)"
 
       - name: Restore log_entries into review app
