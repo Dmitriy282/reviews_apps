@@ -206,7 +206,7 @@ jobs:
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
-            cd /home/${{ secrets.SERVER_USER }}/reviews_apps/${{ env.DYNAMIC_HOST }}
+            cd /home/${{ secrets.SERVER_USER }}/reviews_apps/34-176-118-128.sslip.io
             DUMP_FILE="/home/${{ secrets.SERVER_USER }}/db_dumps/latest.dump"
 
             if [ ! -f "$DUMP_FILE" ]; then
