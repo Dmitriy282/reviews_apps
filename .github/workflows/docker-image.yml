@@ -197,7 +197,7 @@ jobs:
             mkdir -p /home/${{ secrets.SERVER_USER }}/db_dumps
             cd /home/${{ secrets.SERVER_USER }}/reviews_apps/${{ env.DYNAMIC_HOST }}
             docker compose exec -T db pg_dump -U space_admin -Fc -d space_logbook \
-            -t discoveries --data-only \
+            -t discoveries \
             > /home/${{ secrets.SERVER_USER }}/db_dumps/latest.dump
       - name: Restore DB dump into review app
         if: ${{ github.ref_name != 'main' && github.event.inputs.action != 'destroy' }}
