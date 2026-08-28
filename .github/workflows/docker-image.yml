@@ -64,22 +64,21 @@ jobs:
         run: |
           COMMIT_MSG="${{ github.event.head_commit.message }}"
           
-          # Определяем название ветки в зависимости от события (PR или Push)
           if [ "${{ github.event_name }}" == "pull_request" ]; then
             RAW_BRANCH="${{ github.head_ref }}"
           else
             RAW_BRANCH="${{ github.ref_name }}"
           fi
           
-          # Санітизуємо: слеші -> дефіси, нижній регістр (для валідного домену)
           SAFE_BRANCH=$(echo "$RAW_BRANCH" | tr '/' '-' | tr '[:upper:]' '[:lower:]')
           BASE_DOMAIN="34-176-118-128.sslip.io"
 
-          # Якщо передано кастомний хост через інпут (для видалення)
           if [ "${{ github.event.inputs.target_host }}" != "" ]; then
             HOST_VALUE="${{ github.event.inputs.target_host }}.${BASE_DOMAIN}"
+          elif [ "$SAFE_BRANCH" == "main" ]; then
+            # Для main — без префіксу гілки, чистий базовий домен
+            HOST_VALUE="${BASE_DOMAIN}"
           else
-            # Шукаємо кастомний хост у форматі [host: назва] в повідомленні коміту
             CUSTOM_HOST=$(echo "$COMMIT_MSG" | grep -oP '(?<=\[host: )[a-zA-Z0-9_-]+(?=\])' || echo "")
             if [ -n "$CUSTOM_HOST" ]; then
               HOST_VALUE="${CUSTOM_HOST}.${BASE_DOMAIN}"
