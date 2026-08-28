@@ -196,10 +196,9 @@ jobs:
           script: |
             mkdir -p /home/${{ secrets.SERVER_USER }}/db_dumps
             cd /home/${{ secrets.SERVER_USER }}/reviews_apps/${{ env.DYNAMIC_HOST }}
-            docker compose exec -T db pg_dump -U space_admin -Fc -d space_logbook \
-              -t log_entries --data-only \
-              > /home/${{ secrets.SERVER_USER }}/db_dumps/latest.dump
-            echo "Дамп log_entries готовий: $(date)"
+            docker compose exec -T db pg_dump -U space_admin -d space_logbook \
+            -t log_entries --data-only \
+            > /home/${{ secrets.SERVER_USER }}/db_dumps/latest.sql
       - name: Restore log_entries into review app
         if: ${{ github.ref_name != 'main' && github.event.inputs.action != 'destroy' }}
         uses: appleboy/ssh-action@v1.0.3
