@@ -1,4 +1,4 @@
-version: '3.8'
+
 services:
   app:
     image: ${REGISTRY}/dmitriy282/my-app:${IMAGE_TAG}
