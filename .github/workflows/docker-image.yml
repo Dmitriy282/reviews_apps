@@ -175,7 +175,7 @@ jobs:
           script: |
             MAIN_DIR="/home/${{ secrets.SERVER_USER }}/reviews_apps/34-176-118-128.sslip.io"
             DUMP_FILE="/home/${{ secrets.SERVER_USER }}/db_dumps/latest.sql"
-            mkdir -p "/home/${{ secrets.SERVER_USER }}/db_dumps/"
+
             
             if [ ! -d "$MAIN_DIR" ]; then
               echo "Папка main ($MAIN_DIR) ще не існує, пропускаю дамп."
