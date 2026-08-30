@@ -175,7 +175,7 @@ jobs:
             echo "REGISTRY=${{ env.REGISTRY }}" >> .env
 
             docker compose down
-            docker compose up -d
+            docker compose up -d --wait --wait-timeout 180
 
       - name: Dump main DB (before redeploying, so review apps get freshest data)
         if: ${{ github.ref_name != 'main' && github.event.inputs.action != 'destroy' }}
@@ -219,31 +219,6 @@ jobs:
 
             if [ ! -f "$DUMP_FILE" ]; then
               echo "Дамп ще не існує, пропускаю restore (БД буде порожня)"
-              exit 0
-            fi
-
-            echo "Чекаю на готовність db..."
-            for i in $(seq 1 30); do
-              STATUS=$(docker compose exec -T db pg_isready -U space_admin || echo "not ready")
-              [[ "$STATUS" == *"accepting connections"* ]] && break
-              sleep 2
-            done
-
-            echo "Чекаю на появу таблиці log_entries (міграції app)..."
-            TABLE_EXISTS=""
-            for i in $(seq 1 30); do
-              TABLE_EXISTS=$(docker compose exec -T db psql -U space_admin -d space_logbook -tAc \
-                "SELECT to_regclass('public.log_entries');")
-              if [[ "$TABLE_EXISTS" == *"log_entries"* ]]; then
-                echo "Таблиця знайдена."
-                break
-              fi
-              echo "Ще немає таблиці, чекаю... ($i/30)"
-              sleep 2
-            done
-
-            if [[ "$TABLE_EXISTS" != *"log_entries"* ]]; then
-              echo "Таблиця log_entries так і не з'явилась за 60с. Пропускаю restore."
               exit 0
             fi
 
