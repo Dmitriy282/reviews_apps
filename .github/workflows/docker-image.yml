@@ -38,7 +38,7 @@ jobs:
       (github.event_name == 'workflow_dispatch' && github.event.inputs.action != 'destroy')
     runs-on: ubuntu-latest
     env:
-      DATABASE_URL: sqlite:///:memory
+      DATABASE_URL: "sqlite:///:memory:"
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -68,6 +68,7 @@ jobs:
     permissions:
       contents: read
       packages: write
+      pull-requests: write
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -211,6 +212,16 @@ jobs:
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
             docker image prune -af --filter "until=72h"
+      
+      - name: Comment PR with preview link
+        if: ${{ github.event_name == 'pull_request' && github.event.action != 'closed' }}
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          header: preview-env
+          message: |
+            🚀 Оточення розгорнуто: **https://${{ env.DYNAMIC_HOST }}**
+ 
+            Оновлено для коміту `${{ github.sha }}`.
             
       - name: Dump main DB (before redeploying, so review apps get freshest data)
         if: ${{ github.ref_name != 'main' && github.event.inputs.action != 'destroy' }}
@@ -289,10 +300,33 @@ jobs:
               echo "Папка $APP_DIR не знайдена. Схоже, оточення вже було видалено."
             fi
             
-      - name: Auto-destroy on PR close
-        if: |
-          github.event_name == 'pull_request' &&
-          github.event.action == 'closed'
+  cleanup-preview:
+    # Окрема джоба, бо build-and-deploy свідомо не запускається для
+    # закритих PR (там build/push/deploy сенсу не мають) — тож
+    # знищення оточення і оновлення коментаря живуть тут, незалежно.
+    if: |
+      github.event_name == 'pull_request' &&
+      github.event.action == 'closed'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+ 
+      - name: Generate Dynamic Host for Traefik
+        id: vars
+        run: |
+          RAW_BRANCH="${{ github.head_ref }}"
+          SAFE_BRANCH=$(echo "$RAW_BRANCH" | tr '/' '-' | tr '[:upper:]' '[:lower:]')
+          BASE_DOMAIN="34-176-118-128.sslip.io"
+          HOST_VALUE="${SAFE_BRANCH}.${BASE_DOMAIN}"
+ 
+          echo "DYNAMIC_HOST=$HOST_VALUE" >> $GITHUB_ENV
+          echo "Згенерований хост: $HOST_VALUE"
+ 
+      - name: Destroy preview environment
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.SERVER_HOST }}
@@ -300,16 +334,22 @@ jobs:
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
             APP_DIR="/home/${{ secrets.SERVER_USER }}/reviews_apps/${{ env.DYNAMIC_HOST }}"
-            
+ 
             if [ -d "$APP_DIR" ]; then
-              echo "PR закрыт — удаляю окружение ${{ env.DYNAMIC_HOST }}..."
-              cd $APP_DIR
+              echo "PR закрито — видаляю оточення ${{ env.DYNAMIC_HOST }}..."
+              cd "$APP_DIR"
               docker compose down -v
               cd ..
-              rm -rf $APP_DIR
-              echo "Окружение удалено!"
+              rm -rf "$APP_DIR"
+              echo "Оточення видалено!"
             else
-              echo "Папка $APP_DIR не найдена, пропускаю."
+              echo "Папка $APP_DIR не знайдена, пропускаю."
             fi
-      
+ 
+      - name: Update PR comment (environment removed)
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          header: preview-env
+          message: |
+            🗑️ Тимчасове оточення видалено (PR закрито).
 
