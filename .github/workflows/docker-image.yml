@@ -6,7 +6,7 @@ on:
       - 'my-review-app/**'
       - '.github/workflows/**'
   pull_request:
-    types: [labeled, unlabeled, synchronize, closed]
+    types: [labeled, unlabeled, synchronize, closed, reopened]
   workflow_dispatch:
     inputs:
       action:
