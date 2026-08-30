@@ -6,7 +6,7 @@ on:
       - 'my-review-app/**'
       - '.github/workflows/**'
   pull_request:
-    types: [opened, synchronize, closed]
+    types: [labeled, unlabeled, synchronize, closed]
   workflow_dispatch:
     inputs:
       action:
@@ -34,8 +34,9 @@ jobs:
   test:
     if: |
       (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
-      (github.event_name == 'pull_request' && github.event.action != 'closed') ||
+      (github.event_name == 'pull_request' && github.event.action != 'closed' && github.event.action != 'unlabeled' && contains(github.event.pull_request.labels.*.name, 'preview')) ||
       (github.event_name == 'workflow_dispatch' && github.event.inputs.action != 'destroy')
+      
     runs-on: ubuntu-latest
     env:
       DATABASE_URL: "sqlite:///:memory:"
@@ -61,8 +62,9 @@ jobs:
     needs: test
     if: |
       (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
-      (github.event_name == 'pull_request' && github.event.action != 'closed') ||
+      (github.event_name == 'pull_request' && github.event.action != 'closed' && github.event.action != 'unlabeled' && contains(github.event.pull_request.labels.*.name, 'preview')) ||
       (github.event_name == 'workflow_dispatch')
+      
       
     runs-on: ubuntu-latest
     permissions:
@@ -306,7 +308,8 @@ jobs:
     # знищення оточення і оновлення коментаря живуть тут, незалежно.
     if: |
       github.event_name == 'pull_request' &&
-      github.event.action == 'closed'
+      (github.event.action == 'closed' ||
+      (github.event.action == 'unlabeled' && github.event.label.name == 'preview'))
     runs-on: ubuntu-latest
     permissions:
       contents: read
