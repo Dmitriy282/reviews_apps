@@ -2,30 +2,22 @@ name: Deploy to GCP
 on:
   push:
     branches: [ "main" ]
-    paths:  # ← ДОБАВИТЬ
+    paths:
       - 'my-review-app/**'
       - '.github/workflows/**'
   pull_request:
-    types: [labeled, unlabeled, synchronize, closed, reopened]
+    types: [labeled, synchronize, reopened]
   workflow_dispatch:
     inputs:
-      action:
-        description: 'Виберіть дію: розгорнути чи видалити?'
-        required: true
-        default: 'deploy'
-        type: choice
-        options:
-          - deploy
-          - destroy
       target_host:
-        description: 'Специфічний хост для видалення (наприклад, my-feature). Залиште порожнім, щоб використати поточний.'
+        description: 'Специфічний хост для деплою (наприклад, my-feature). Залиште порожнім, щоб використати поточну гілку.'
         required: false
         type: string
 
 concurrency:
   group: preview-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: true
-  
+
 env:
   REGISTRY: ghcr.io
   IMAGE_TAG: ${{ github.sha }}
@@ -34,21 +26,21 @@ jobs:
   test:
     if: |
       (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
-      (github.event_name == 'pull_request' && github.event.action != 'closed' && github.event.action != 'unlabeled' && contains(github.event.pull_request.labels.*.name, 'preview')) ||
-      (github.event_name == 'workflow_dispatch' && github.event.inputs.action != 'destroy')
-      
+      (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'preview')) ||
+      (github.event_name == 'workflow_dispatch')
+
     runs-on: ubuntu-latest
     env:
       DATABASE_URL: "sqlite:///:memory:"
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
- 
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.12'  
- 
+          python-version: '3.12'
+
       - name: Install dependencies
         working-directory: ./my-review-app
         run: |
@@ -57,39 +49,36 @@ jobs:
       - name: Run pytest
         working-directory: ./my-review-app
         run: pytest -v
-        
+
   build-and-deploy:
     needs: test
     if: |
       (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
-      (github.event_name == 'pull_request' && github.event.action != 'closed' && github.event.action != 'unlabeled' && contains(github.event.pull_request.labels.*.name, 'preview')) ||
+      (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'preview')) ||
       (github.event_name == 'workflow_dispatch')
-      
-      
+
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
       pull-requests: write
-    
+
     env:
       SERVER_HOST: ${{ secrets.SERVER_HOST }}
       SERVER_USER: ${{ secrets.SERVER_USER }}
       SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
-      
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
       - name: Set image tag
-        if: ${{ github.event.inputs.action != 'destroy' }}
         run: |
           TIMESTAMP=$(date +%s)
           SHA=$(echo ${{ github.sha }} | cut -c1-7)
           echo "IMAGE_TAG=${TIMESTAMP}-${SHA}" >> $GITHUB_ENV
 
       - name: Login to GHCR
-        if: ${{ github.event.inputs.action != 'destroy' }}
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
@@ -97,7 +86,6 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push Docker image
-        if: ${{ github.event.inputs.action != 'destroy' }}
         uses: docker/build-push-action@v5.3.0
         with:
           context: ./my-review-app
@@ -136,7 +124,6 @@ jobs:
           echo "Згенерований хост: $HOST_VALUE"
 
       - name: Copy Traefik compose to its own folder
-        if: ${{ github.event.inputs.action != 'destroy' }}
         uses: ./.github/actions/scp-copy
         with:
           source: "traefik/docker-compose.yml"
@@ -144,7 +131,6 @@ jobs:
           strip_components: 1
 
       - name: Ensure Traefik network + container are running
-        if: ${{ github.event.inputs.action != 'destroy' }}
         uses: ./.github/actions/ssh-run
         with:
           script: |
@@ -159,7 +145,6 @@ jobs:
             fi
 
       - name: Create app directory on server
-        if: ${{ github.event.inputs.action != 'destroy' }}
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ env.SERVER_HOST }}
@@ -169,17 +154,13 @@ jobs:
             mkdir -p /home/${{ secrets.SERVER_USER }}/reviews_apps/${{ env.DYNAMIC_HOST }}
 
       - name: Copy docker-compose to server
-        if: ${{ github.event.inputs.action != 'destroy' }}
         uses: ./.github/actions/scp-copy
         with:
           source: "my-review-app/docker-compose.yml"
           target: "/home/${{ secrets.SERVER_USER }}/reviews_apps/${{ env.DYNAMIC_HOST }}"
           strip_components: 1
 
-     
-
       - name: Deploy to GCP Server via SSH
-        if: ${{ github.event.inputs.action != 'destroy' }}
         uses: ./.github/actions/ssh-run
         with:
           script: |
@@ -188,7 +169,7 @@ jobs:
             cd /home/${{ secrets.SERVER_USER }}/reviews_apps/${{ env.DYNAMIC_HOST }}
 
             PROJECT_NAME=$(echo "${{ env.DYNAMIC_HOST }}" | tr '.' '-' | tr '[:upper:]' '[:lower:]')
-            
+
             SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
             echo "COMPOSE_PROJECT_NAME=${SHORT_SHA}" > .env
             echo "DYNAMIC_HOST=${{ env.DYNAMIC_HOST }}" >> .env
@@ -198,33 +179,31 @@ jobs:
 
             docker compose down
             docker compose up -d --wait --wait-timeout 180
-      
+
       - name: Prune old Docker images on server
-        if: ${{ github.event.inputs.action != 'destroy' }}
         uses: ./.github/actions/ssh-run
         with:
           script: |
             docker image prune -af --filter "until=72h"
-      
+
       - name: Comment PR with preview link
-        if: ${{ github.event_name == 'pull_request' && github.event.action != 'closed' }}
+        if: ${{ github.event_name == 'pull_request' }}
         uses: marocchino/sticky-pull-request-comment@v2
         with:
           header: preview-env
           message: |
             🚀 Оточення розгорнуто: **https://${{ env.DYNAMIC_HOST }}**
- 
+
             Оновлено для коміту `${{ github.sha }}`.
-            
+
       - name: Dump main DB (before redeploying, so review apps get freshest data)
-        if: ${{ github.ref_name != 'main' && github.event.inputs.action != 'destroy' }}
+        if: ${{ github.ref_name != 'main' }}
         uses: ./.github/actions/ssh-run
         with:
           script: |
             MAIN_DIR="/home/${{ secrets.SERVER_USER }}/reviews_apps/34-176-118-128.sslip.io"
             DUMP_FILE="/home/${{ secrets.SERVER_USER }}/db_dumps/latest.sql"
 
-            
             if [ ! -d "$MAIN_DIR" ]; then
               echo "Папка main ($MAIN_DIR) ще не існує, пропускаю дамп."
               exit 0
@@ -242,7 +221,7 @@ jobs:
             echo "Дамп log_entries готовий: $(date)"
 
       - name: Restore log_entries into review app
-        if: ${{ github.ref_name != 'main' && github.event.inputs.action != 'destroy' }}
+        if: ${{ github.ref_name != 'main' }}
         uses: ./.github/actions/ssh-run
         with:
           script: |
@@ -262,81 +241,3 @@ jobs:
             # Восстанавливаем через psql
             cat "$DUMP_FILE" | docker compose exec -T db psql -U space_admin -d space_logbook
             echo "Restore log_entries завершено"
-
-      - name: Destroy Environment (Destroy only)
-        if: ${{ github.event.inputs.action == 'destroy' }}
-        uses: ./.github/actions/ssh-run
-        with:
-          script: |
-            APP_DIR="/home/${{ secrets.SERVER_USER }}/reviews_apps/${{ env.DYNAMIC_HOST }}"
-
-            if [ -d "$APP_DIR" ]; then
-              echo "Зупиняємо та видаляємо контейнери в $APP_DIR..."
-              cd $APP_DIR
-              docker compose down -v
-
-              echo "Видаляємо папку..."
-              cd ..
-              rm -rf $APP_DIR
-
-              echo "Оточення ${{ env.DYNAMIC_HOST }} успішно видалено!"
-            else
-              echo "Папка $APP_DIR не знайдена. Схоже, оточення вже було видалено."
-            fi
-            
-  cleanup-preview:
-    # Окрема джоба, бо build-and-deploy свідомо не запускається для
-    # закритих PR (там build/push/deploy сенсу не мають) — тож
-    # знищення оточення і оновлення коментаря живуть тут, незалежно.
-    if: |
-      github.event_name == 'pull_request' &&
-      (github.event.action == 'closed' ||
-      (github.event.action == 'unlabeled' && github.event.label.name == 'preview'))
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      pull-requests: write
-    env:
-      SERVER_HOST: ${{ secrets.SERVER_HOST }}
-      SERVER_USER: ${{ secrets.SERVER_USER }}
-      SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
- 
-      - name: Generate Dynamic Host for Traefik
-        id: vars
-        run: |
-          RAW_BRANCH="${{ github.head_ref }}"
-          SAFE_BRANCH=$(echo "$RAW_BRANCH" | tr '/' '-' | tr '[:upper:]' '[:lower:]')
-          BASE_DOMAIN="34-176-118-128.sslip.io"
-          HOST_VALUE="${SAFE_BRANCH}.${BASE_DOMAIN}"
- 
-          echo "DYNAMIC_HOST=$HOST_VALUE" >> $GITHUB_ENV
-          echo "Згенерований хост: $HOST_VALUE"
- 
-      - name: Destroy preview environment
-        uses: ./.github/actions/ssh-run
-        with:
-    
-          script: |
-            APP_DIR="/home/${{ secrets.SERVER_USER }}/reviews_apps/${{ env.DYNAMIC_HOST }}"
- 
-            if [ -d "$APP_DIR" ]; then
-              echo "PR закрито — видаляю оточення ${{ env.DYNAMIC_HOST }}..."
-              cd "$APP_DIR"
-              docker compose down -v
-              cd ..
-              rm -rf "$APP_DIR"
-              echo "Оточення видалено!"
-            else
-              echo "Папка $APP_DIR не знайдена, пропускаю."
-            fi
- 
-      - name: Update PR comment (environment removed)
-        uses: marocchino/sticky-pull-request-comment@v2
-        with:
-          header: preview-env
-          message: |
-            🗑️ Тимчасове оточення видалено (PR закрито).
-
