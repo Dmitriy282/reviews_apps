@@ -1,0 +1,15 @@
+name: 'SSH Run'
+description: 'Виконати script на деплой-сервері через SSH'
+inputs:
+  script:
+    required: true
+    description: 'Bash-скрипт для виконання на сервері'
+runs:
+  using: "composite"
+  steps:
+    - uses: appleboy/ssh-action@v1.0.3
+      with:
+        host: ${{ env.SERVER_HOST }}
+        username: ${{ env.SERVER_USER }}
+        key: ${{ env.SSH_PRIVATE_KEY }}
+        script: ${{ inputs.script }}

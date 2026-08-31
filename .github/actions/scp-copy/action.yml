@@ -1,0 +1,24 @@
+name: 'SCP Copy'
+description: 'Скопіювати файл(и) на деплой-сервер через SCP'
+inputs:
+  source:
+    required: true
+    description: 'Шлях до файлу в репозиторії'
+  target:
+    required: true
+    description: 'Цільова директорія на сервері'
+  strip_components:
+    required: false
+    default: '0'
+    description: 'Кількість рівнів шляху, які треба відкинути'
+runs:
+  using: "composite"
+  steps:
+    - uses: appleboy/scp-action@v0.1.7
+      with:
+        host: ${{ env.SERVER_HOST }}
+        username: ${{ env.SERVER_USER }}
+        key: ${{ env.SSH_PRIVATE_KEY }}
+        source: ${{ inputs.source }}
+        target: ${{ inputs.target }}
+        strip_components: ${{ inputs.strip_components }}
