@@ -1,0 +1,82 @@
+name: Destroy Preview Environment
+
+on:
+  pull_request:
+    types: [closed, unlabeled]
+  workflow_dispatch:
+    inputs:
+      target_host:
+        description: 'Специфічний хост для видалення (наприклад, my-feature). Залиште порожнім, щоб використати поточну гілку.'
+        required: false
+        type: string
+
+concurrency:
+  group: preview-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  destroy:
+    if: |
+      (github.event_name == 'pull_request' &&
+        (github.event.action == 'closed' ||
+        (github.event.action == 'unlabeled' && github.event.label.name == 'preview'))) ||
+      github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    env:
+      SERVER_HOST: ${{ secrets.SERVER_HOST }}
+      SERVER_USER: ${{ secrets.SERVER_USER }}
+      SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Generate Dynamic Host
+        id: vars
+        run: |
+          BASE_DOMAIN="34-176-118-128.sslip.io"
+
+          if [ "${{ github.event_name }}" == "pull_request" ]; then
+            RAW_BRANCH="${{ github.head_ref }}"
+          else
+            RAW_BRANCH="${{ github.ref_name }}"
+          fi
+
+          SAFE_BRANCH=$(echo "$RAW_BRANCH" | tr '/' '-' | tr '[:upper:]' '[:lower:]')
+
+          if [ -n "${{ github.event.inputs.target_host }}" ]; then
+            HOST_VALUE="${{ github.event.inputs.target_host }}.${BASE_DOMAIN}"
+          else
+            HOST_VALUE="${SAFE_BRANCH}.${BASE_DOMAIN}"
+          fi
+
+          echo "DYNAMIC_HOST=$HOST_VALUE" >> $GITHUB_ENV
+          echo "Згенерований хост: $HOST_VALUE"
+
+      - name: Destroy preview environment
+        uses: ./.github/actions/ssh-run
+        with:
+          script: |
+            APP_DIR="/home/${{ secrets.SERVER_USER }}/reviews_apps/${{ env.DYNAMIC_HOST }}"
+
+            if [ -d "$APP_DIR" ]; then
+              echo "Видаляю оточення ${{ env.DYNAMIC_HOST }}..."
+              cd "$APP_DIR"
+              docker compose down -v
+              cd ..
+              rm -rf "$APP_DIR"
+              echo "Оточення видалено!"
+            else
+              echo "Папка $APP_DIR не знайдена, пропускаю."
+            fi
+
+      - name: Update PR comment (environment removed)
+        if: ${{ github.event_name == 'pull_request' }}
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          header: preview-env
+          message: |
+            🗑️ Тимчасове оточення видалено (PR закрито).
+
