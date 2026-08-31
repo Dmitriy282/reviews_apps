@@ -1,0 +1,80 @@
+name: Preview Reaper
+
+on:
+  schedule:
+    - cron: '0 3 * * *'   # щодня о 03:00 UTC
+  workflow_dispatch:
+    inputs:
+      ttl_days:
+        description: 'Видаляти оточення, не оновлювані довше N днів'
+        required: false
+        type: string
+        default: '7'
+      dry_run:
+        description: 'Тільки показати, що буде видалено, без реального видалення'
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  reap:
+    runs-on: ubuntu-latest
+    env:
+      SERVER_HOST: ${{ secrets.SERVER_HOST }}
+      SERVER_USER: ${{ secrets.SERVER_USER }}
+      SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Reap stale preview environments
+        uses: ./.github/actions/ssh-run
+        with:
+          script: |
+            BASE_DIR="/home/${{ secrets.SERVER_USER }}/reviews_apps"
+            PROD_HOST="34-176-118-128.sslip.io"
+            TTL_DAYS="${{ github.event.inputs.ttl_days || '7' }}"
+            DRY_RUN="${{ github.event.inputs.dry_run || 'false' }}"
+
+            if [ ! -d "$BASE_DIR" ]; then
+              echo "Каталог $BASE_DIR не знайдено, нічого прибирати."
+              exit 0
+            fi
+
+            echo "TTL: ${TTL_DAYS} днів, dry_run=${DRY_RUN}"
+            cd "$BASE_DIR"
+
+            for dir in */; do
+              name="${dir%/}"
+
+              # Ніколи не чіпаємо prod-оточення
+              if [ "$name" == "$PROD_HOST" ]; then
+                continue
+              fi
+
+              # Мітка свіжості — .env перезаписується щодеплою,
+              # тож його mtime надійніший за mtime самої директорії
+              marker="$BASE_DIR/$name/.env"
+              if [ ! -f "$marker" ]; then
+                marker="$BASE_DIR/$name"
+              fi
+
+              stale=$(find "$marker" -maxdepth 0 -mtime "+${TTL_DAYS}")
+              if [ -z "$stale" ]; then
+                continue
+              fi
+
+              echo "Застаріле оточення: $name (не оновлювалось > ${TTL_DAYS} днів)"
+
+              if [ "$DRY_RUN" == "true" ]; then
+                echo "  [dry-run] пропускаю видалення"
+                continue
+              fi
+
+              echo "  видаляю контейнери та каталог..."
+              (cd "$BASE_DIR/$name" && docker compose down -v) || echo "  попередження: docker compose down завершився з помилкою, продовжую видалення папки"
+              rm -rf "$BASE_DIR/$name"
+              echo "  видалено: $name"
+            done
+
+            echo "Reaper завершив роботу."
