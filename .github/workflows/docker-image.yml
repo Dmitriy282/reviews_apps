@@ -71,11 +71,7 @@ jobs:
       contents: read
       packages: write
       pull-requests: write
-    env:
-      SERVER_HOST: ${{ secrets.SERVER_HOST }}
-      SERVER_USER: ${{ secrets.SERVER_USER }}
-      SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
-    
+  
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -136,22 +132,16 @@ jobs:
 
       - name: Copy Traefik compose to its own folder
         if: ${{ github.event.inputs.action != 'destroy' }}
-        uses: appleboy/scp-action@v0.1.7
+        uses: ./.github/actions/scp-copy
         with:
-          host: ${{ env.SERVER_HOST }}
-          username: ${{ env.SERVER_USER }}
-          key: ${{ env.SSH_PRIVATE_KEY }}
           source: "traefik/docker-compose.yml"
           target: "/home/${{ secrets.SERVER_USER }}/traefik"
           strip_components: 1
 
       - name: Ensure Traefik network + container are running
         if: ${{ github.event.inputs.action != 'destroy' }}
-        uses: appleboy/ssh-action@v1.0.3
+        uses: ./.github/actions/ssh-run
         with:
-          host: ${{ env.SERVER_HOST }}
-          username: ${{ env.SERVER_USER }}
-          key: ${{ env.SSH_PRIVATE_KEY }}
           script: |
             mkdir -p /home/${{ secrets.SERVER_USER }}/traefik/letsencrypt
             docker network inspect traefik-net >/dev/null 2>&1 || docker network create traefik-net
@@ -175,11 +165,8 @@ jobs:
 
       - name: Copy docker-compose to server
         if: ${{ github.event.inputs.action != 'destroy' }}
-        uses: appleboy/scp-action@v0.1.7
+        uses: ./.github/actions/scp-copy
         with:
-          host: ${{ env.SERVER_HOST }}
-          username: ${{ env.SERVER_USER }}
-          key: ${{ env.SSH_PRIVATE_KEY }}
           source: "my-review-app/docker-compose.yml"
           target: "/home/${{ secrets.SERVER_USER }}/reviews_apps/${{ env.DYNAMIC_HOST }}"
           strip_components: 1
@@ -188,11 +175,8 @@ jobs:
 
       - name: Deploy to GCP Server via SSH
         if: ${{ github.event.inputs.action != 'destroy' }}
-        uses: appleboy/ssh-action@v1.0.3
+        uses: ./.github/actions/ssh-run
         with:
-          host: ${{ env.SERVER_HOST }}
-          username: ${{ env.SERVER_USER }}
-          key: ${{ env.SSH_PRIVATE_KEY }}
           script: |
             echo "${{ secrets.GITHUB_TOKEN }}" | docker login ${{ env.REGISTRY }} -u ${{ github.actor }} --password-stdin
             docker pull ${{ env.REGISTRY }}/dmitriy282/my-app:${{ env.IMAGE_TAG }}
@@ -212,11 +196,8 @@ jobs:
       
       - name: Prune old Docker images on server
         if: ${{ github.event.inputs.action != 'destroy' }}
-        uses: appleboy/ssh-action@v1.0.3
+        uses: ./.github/actions/ssh-run
         with:
-          host: ${{ secrets.SERVER_HOST }}
-          username: ${{ secrets.SERVER_USER }}
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
             docker image prune -af --filter "until=72h"
       
@@ -232,7 +213,7 @@ jobs:
             
       - name: Dump main DB (before redeploying, so review apps get freshest data)
         if: ${{ github.ref_name != 'main' && github.event.inputs.action != 'destroy' }}
-        uses: appleboy/ssh-action@v1.0.3
+        uses: ./.github/actions/ssh-run
         with:
           script: |
             MAIN_DIR="/home/${{ secrets.SERVER_USER }}/reviews_apps/34-176-118-128.sslip.io"
@@ -257,7 +238,7 @@ jobs:
 
       - name: Restore log_entries into review app
         if: ${{ github.ref_name != 'main' && github.event.inputs.action != 'destroy' }}
-        uses: appleboy/ssh-action@v1.0.3
+        uses: ./.github/actions/ssh-run
         with:
           script: |
             mkdir -p /home/${{ secrets.SERVER_USER }}/db_dumps
@@ -279,7 +260,7 @@ jobs:
 
       - name: Destroy Environment (Destroy only)
         if: ${{ github.event.inputs.action == 'destroy' }}
-        uses: appleboy/ssh-action@v1.0.3
+        uses: ./.github/actions/ssh-run
         with:
           script: |
             APP_DIR="/home/${{ secrets.SERVER_USER }}/reviews_apps/${{ env.DYNAMIC_HOST }}"
@@ -326,7 +307,7 @@ jobs:
           echo "Згенерований хост: $HOST_VALUE"
  
       - name: Destroy preview environment
-        uses: appleboy/ssh-action@v1.0.3
+        uses: ./.github/actions/ssh-run
         with:
     
           script: |
