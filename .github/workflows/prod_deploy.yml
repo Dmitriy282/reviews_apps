@@ -1,0 +1,126 @@
+name: Deploy to Prod
+on:
+  push:
+    branches: [ "main" ]
+    paths:
+      - 'my-review-app/**'
+      - '.github/workflows/**'
+
+concurrency:
+  group: preview-main
+  cancel-in-progress: true
+
+env:
+  REGISTRY: ghcr.io
+  BASE_DOMAIN: "34-176-118-128.sslip.io"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: "sqlite:///:memory:"
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        working-directory: ./my-review-app
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Run pytest
+        working-directory: ./my-review-app
+        run: pytest -v
+
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    env:
+      SERVER_HOST: ${{ secrets.SERVER_HOST }}
+      SERVER_USER: ${{ secrets.SERVER_USER }}
+      SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+      DYNAMIC_HOST: "34-176-118-128.sslip.io"
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set image tag
+        run: |
+          TIMESTAMP=$(date +%s)
+          SHA=$(echo ${{ github.sha }} | cut -c1-7)
+          echo "IMAGE_TAG=${TIMESTAMP}-${SHA}" >> $GITHUB_ENV
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5.3.0
+        with:
+          context: ./my-review-app
+          push: true
+          tags: ${{ env.REGISTRY }}/dmitriy282/my-app:${{ env.IMAGE_TAG }}
+
+      - name: Ensure Traefik network + container are running
+        uses: ./.github/actions/ssh-run
+        with:
+          script: |
+            mkdir -p /home/${{ secrets.SERVER_USER }}/traefik/letsencrypt
+            docker network inspect traefik-net >/dev/null 2>&1 || docker network create traefik-net
+            cd /home/${{ secrets.SERVER_USER }}/traefik
+            if [ -z "$(docker ps -q -f name=^traefik$)" ]; then
+              echo "Traefik не запущений — запускаю..."
+              docker compose up -d
+            else
+              echo "Traefik вже працює, не чіпаю його."
+            fi
+
+      - name: Create app directory on server
+        uses: ./.github/actions/ssh-run
+        with:
+          script: |
+            mkdir -p /home/${{ secrets.SERVER_USER }}/reviews_apps/${{ env.DYNAMIC_HOST }}
+
+      - name: Copy docker-compose to server
+        uses: ./.github/actions/scp-copy
+        with:
+          source: "my-review-app/docker-compose.yml"
+          target: "/home/${{ secrets.SERVER_USER }}/reviews_apps/${{ env.DYNAMIC_HOST }}"
+          strip_components: 1
+
+      - name: Deploy to GCP Server via SSH
+        uses: ./.github/actions/ssh-run
+        with:
+          script: |
+            echo "${{ secrets.GITHUB_TOKEN }}" | docker login ${{ env.REGISTRY }} -u ${{ github.actor }} --password-stdin
+            docker pull ${{ env.REGISTRY }}/dmitriy282/my-app:${{ env.IMAGE_TAG }}
+            cd /home/${{ secrets.SERVER_USER }}/reviews_apps/${{ env.DYNAMIC_HOST }}
+
+            SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
+            echo "COMPOSE_PROJECT_NAME=${SHORT_SHA}" > .env
+            echo "DYNAMIC_HOST=${{ env.DYNAMIC_HOST }}" >> .env
+            echo "IMAGE_TAG=${{ env.IMAGE_TAG }}" >> .env
+            echo "ROUTER_NAME=${SHORT_SHA}" >> .env
+            echo "REGISTRY=${{ env.REGISTRY }}" >> .env
+
+            docker compose down
+            docker compose up -d --wait --wait-timeout 180
+
+      - name: Prune old Docker images on server
+        uses: ./.github/actions/ssh-run
+        with:
+          script: |
+            docker image prune -af --filter "until=72h"
